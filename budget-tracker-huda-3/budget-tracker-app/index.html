@@ -1040,18 +1040,26 @@ function subscribeMonth() {
 // hanya memuat bulan aktif — sehingga perbandingannya tidak pernah muncul.
 // Muat pengeluaran bulan sebelumnya sekali saja (1 query, hasilnya di-cache).
 const prevMonthLoaded = new Set();
+
+// Bulan pembanding: mundur satu bulan, melintasi pergantian tahun bila perlu
+// (Januari dibandingkan dengan Desember tahun sebelumnya).
+function prevPeriod() {
+  return currentMonth > 0
+    ? { year: currentYear,     month: MONTHS[currentMonth - 1] }
+    : { year: currentYear - 1, month: MONTHS[11] };
+}
+
 async function ensurePrevMonthLoaded() {
-  if(currentMonth === 0) return;   // Januari tidak punya pembanding di tahun yang sama
-  const prevM = MONTHS[currentMonth - 1];
-  const key = `${currentYear}_${prevM}`;
+  const { year: prevY, month: prevM } = prevPeriod();
+  const key = `${prevY}_${prevM}`;
   if(prevMonthLoaded.has(key)) return;
   const uid = currentUser?.uid;
   if(!uid || !db) return;
   prevMonthLoaded.add(key);
-  initCache(currentYear);
+  initCache(prevY);
   try {
-    const snap = await getDocs(collection(db, `users/${uid}/${currentYear}_${prevM}_out`));
-    cache[currentYear][prevM].out = snap.docs.map(d => ({id: d.id, ...d.data()}));
+    const snap = await getDocs(collection(db, `users/${uid}/${prevY}_${prevM}_out`));
+    cache[prevY][prevM].out = snap.docs.map(d => ({id: d.id, ...d.data()}));
     window.renderInsights();
   } catch(e) {
     prevMonthLoaded.delete(key);
@@ -1659,14 +1667,15 @@ window.renderInsights = function() {
   if(!el) return;
   const countEl = document.getElementById('insightCount');
 
-  const month   = MONTHS[currentMonth];
-  const prevIdx = currentMonth > 0 ? currentMonth - 1 : null;
-  const prevMon = prevIdx !== null ? MONTHS[prevIdx] : null;
+  const month = MONTHS[currentMonth];
+  const prev  = prevPeriod();
 
   initCache(currentYear);
   const ins  = cache[currentYear][month].in;
   const outs = cache[currentYear][month].out;
-  const prevOuts = prevMon ? (cache[currentYear][prevMon]?.out || []) : [];
+  // Di bulan Januari pembandingnya Desember tahun lalu, jadi cache tahun itu
+  // belum tentu sudah diinisialisasi — pakai optional chaining di kedua level.
+  const prevOuts = cache[prev.year]?.[prev.month]?.out || [];
 
   const totalIn  = ins.reduce((s,e)=>s+e.amount,0);
   const totalOut = outs.reduce((s,e)=>s+e.amount,0);
