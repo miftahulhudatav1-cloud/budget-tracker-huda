@@ -1124,29 +1124,67 @@ async function refreshAnnual() {
   renderAnnual();
 }
 
+// Rules Firestore mensyaratkan request.auth.uid sama dengan userId di path, jadi
+// setiap akses tanpa uid asli pasti ditolak. Dulu kode memakai fallback 'guest',
+// yang mengubah jeda sesaat pada auth menjadi "Missing or insufficient permissions"
+// yang permanen — tidak ada yang mencoba ulang setelah sesi siap. Sekarang operasi
+// dibatalkan dengan jujur, dan pemanggil yang bisa menunggu akan diulang otomatis.
+function uidAtau(pesan) {
+  const uid = currentUser?.uid;
+  if (!uid && pesan) showToast(pesan, 'error');
+  return uid || null;
+}
+
+// Pesan Firestore apa adanya terlalu samar untuk menuntun ke penyebabnya.
+function jelaskanError(err) {
+  if (err?.code === 'permission-denied') {
+    return 'Akses ditolak Firestore. Cek security rules di Firebase Console (tab Rules).';
+  }
+  if (err?.code === 'unavailable') {
+    return 'Tidak ada koneksi. Data yang tersimpan di perangkat tetap bisa dilihat.';
+  }
+  if (err?.code === 'failed-precondition') {
+    return 'Firestore butuh index untuk query ini — lihat tautan di Console (F12).';
+  }
+  return 'Error: ' + (err?.message || err);
+}
+
 // ── FIRESTORE REALTIME ─────────────────────────
 function subscribeMonth() {
   const month = MONTHS[currentMonth];
-  setSyncStatus('syncing');
 
   if(unsubIn)  unsubIn();
   if(unsubOut) unsubOut();
 
-  const uid = currentUser?.uid || 'guest';
+  const uid = currentUser?.uid;
+  if (!uid) {
+    // Sesi belum siap. onAuthStateChanged akan memanggil buildUI lagi begitu
+    // login selesai, dan subscribeMonth ikut jalan dari sana.
+    setSyncStatus('');
+    return;
+  }
+
+  setSyncStatus('syncing');
   const colIn  = `users/${uid}/${currentYear}_${month}_in`;
   const colOut = `users/${uid}/${currentYear}_${month}_out`;
   const qIn  = query(collection(db, colIn),  orderBy('date','desc'));
   const qOut = query(collection(db, colOut), orderBy('date','desc'));
 
+  const onErr = err => {
+    console.error('Listener bulan gagal:', err.code, err.message);
+    showToast(jelaskanError(err), 'error');
+    setSyncStatus('');
+  };
+
   unsubIn = onSnapshot(qIn, snap => {
     initCache(currentYear); cache[currentYear][month].in = snap.docs.map(d => ({id: d.id, ...d.data()}));
     render(); setSyncStatus('synced');
-  }, err => { showToast('Error: ' + err.message, 'error'); setSyncStatus(''); });
+  }, onErr);
 
   unsubOut = onSnapshot(qOut, snap => {
     initCache(currentYear); cache[currentYear][month].out = snap.docs.map(d => ({id: d.id, ...d.data()}));
     render(); setSyncStatus('synced');
-  }, err => { showToast('Error: ' + err.message, 'error'); setSyncStatus(''); });
+  }, onErr);
 
   ensurePrevMonthLoaded();
 }
@@ -1224,7 +1262,8 @@ window.addEntry = async function(type) {
 
   // ── Save to Firebase in background ──
   try {
-    const uid2 = currentUser?.uid || 'guest';
+    const uid2 = uidAtau('Sesi belum siap — muat ulang halaman lalu coba lagi.');
+    if(!uid2) throw new Error('Sesi tidak aktif.');
     const colPath = `users/${uid2}/${currentYear}_${month}_${type}`;
     if(receiptToSave) {
       pendingReceipt = receiptToSave;
@@ -1317,7 +1356,8 @@ window.saveEdit = async function() {
   btn.disabled = true;
   btn.textContent = 'Menyimpan…';
   try {
-    const uid = currentUser?.uid || 'guest';
+    const uid = uidAtau('Sesi belum siap — muat ulang halaman lalu coba lagi.');
+    if(!uid) throw new Error('Sesi tidak aktif.');
     // updateDoc, bukan setDoc: field lain seperti createdAt dan receiptId harus
     // tetap utuh. Menulis ulang seluruh dokumen akan menghapus tautan ke foto struk.
     await updateDoc(doc(db, `users/${uid}/${editing.year}_${editing.month}_${editing.type}`, editing.id), data);
@@ -1336,7 +1376,8 @@ window.deleteEntry = async function(type, id) {
   const month = MONTHS[currentMonth];
   if(!confirm('Hapus entri ini?')) return;
   try {
-    const uid3 = currentUser?.uid || 'guest';
+    const uid3 = uidAtau('Sesi belum siap — muat ulang halaman lalu coba lagi.');
+    if(!uid3) return;
     // Ambil receiptId sebelum entrinya hilang, agar fotonya tidak tertinggal
     // sebagai dokumen yatim sampai masa 7 hari habis.
     const entri = cache[currentYear]?.[month]?.[type]?.find(x => x.id === id);
@@ -1827,7 +1868,8 @@ window.applyRecurring = async function(id) {
   render();
 
   try {
-    const uid2 = currentUser?.uid||'guest';
+    const uid2 = uidAtau('Sesi belum siap — muat ulang halaman lalu coba lagi.');
+    if(!uid2) throw new Error('Sesi tidak aktif.');
     const colPath = `users/${uid2}/${currentYear}_${month}_${rec.type}`;
     await addDoc(collection(db, colPath), {...data, createdAt: serverTimestamp()});
     showToast(`✅ "${rec.name}" diterapkan ke ${month}!`,'success');
@@ -2615,10 +2657,11 @@ window.exportAllData = async function() {
 
   try {
     showT('⏳ Menyiapkan backup...', 'success');
-    const uid = currentUser?.uid || 'guest';
+    const uid = uidAtau('Sesi belum siap — muat ulang halaman lalu coba lagi.');
+    if(!uid) return;
     const backup = {
       exportedAt: new Date().toISOString(),
-      user: currentUser?.email || 'guest',
+      user: currentUser?.email || '',
       years: {}
     };
 
@@ -2691,7 +2734,8 @@ window.handleRestoreFile = function(event) {
       if(!confirm(`Restore data dari backup tanggal ${new Date(backup.exportedAt).toLocaleDateString('id-ID')}?\n\nData akan DITAMBAHKAN ke data yang ada saat ini.`)) return;
 
       showT('⏳ Memulihkan data...', 'success');
-      const uid = currentUser?.uid || 'guest';
+      const uid = uidAtau('Sesi belum siap — muat ulang halaman lalu coba lagi.');
+      if(!uid) return;
       let count = 0, lewat = 0;
 
       for (const year of Object.keys(backup.years)) {
