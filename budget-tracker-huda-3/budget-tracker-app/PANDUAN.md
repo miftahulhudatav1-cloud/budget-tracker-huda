@@ -11,8 +11,6 @@ Datanya disimpan di Firebase (gratis) sehingga bisa dibuka dari HP dan laptop de
 | `manifest.json` | Metadata agar bisa di-install ke HP seperti aplikasi biasa |
 | `sw.js` | Service worker (butuh HTTPS, tidak aktif saat dibuka dari file lokal) |
 | `vercel.json` | Mengatur `Content-Type` manifest saat di-deploy ke Vercel |
-| `api/scan-receipt.js` | Serverless function pembaca struk (lihat Step 5) |
-| `package.json` | Dependensi untuk serverless function saja — aplikasinya tetap tanpa build |
 | `PANDUAN.md` | File ini |
 
 ---
@@ -168,50 +166,45 @@ Lebih cepat, tapi tidak otomatis ter-update saat kode berubah.
 
 ---
 
-## 📷 Step 5 — Aktifkan Scan Struk (opsional)
+## 📷 Scan Struk
 
-Fitur ini membaca foto struk dan mengisi form pengeluaran otomatis. Kalau tidak
-diaktifkan, aplikasi tetap berjalan normal — tombol scan hanya akan menampilkan
-pesan bahwa fiturnya belum dikonfigurasi.
+Tab **Pengeluaran** → **📷 Scan Struk** → foto struknya. Di HP, tombol ini langsung
+membuka kamera belakang.
 
-> **Kenapa butuh serverless function?** API key tidak boleh ditaruh di
-> `index.html` — siapa pun bisa melihatnya lewat View Source dan memakainya atas
-> tagihan kamu. `api/scan-receipt.js` berjalan di server Vercel, tempat key
-> disimpan sebagai Environment Variable dan tidak pernah dikirim ke browser.
+Tidak perlu setup apa pun, tidak ada API key, tidak ada biaya. Pembacaan berjalan
+sepenuhnya di perangkat kamu memakai Tesseract.js — foto struk tidak pernah dikirim
+ke server mana pun.
 
-### 5.1 Ambil API key Anthropic
+### Yang realistis bisa dan tidak bisa
 
-1. Buka [console.anthropic.com](https://console.anthropic.com) → daftar
-2. Isi saldo (fitur ini berbayar per pemakaian — lihat perkiraan biaya di bawah)
-3. **API Keys** → **Create Key** → salin nilainya
+Tesseract adalah OCR: ia mengubah gambar menjadi **teks mentah**, tanpa memahami
+isinya. Jadi:
 
-### 5.2 Pasang key di Vercel
+| Field | Terisi otomatis? |
+|---|---|
+| Jumlah (Rp) | Ya — dicari dari baris bertuliskan TOTAL / GRAND TOTAL |
+| Tanggal | Ya — bila tercetak di struk |
+| Keterangan | Ya — diambil dari nama toko di kepala struk |
+| Kategori | Kadang — ditebak dari kata kunci (Indomaret → Makanan, SPBU → Transportasi) |
+| Jenis & Metode Bayar | **Tidak** — tidak bisa disimpulkan dari teks, isi manual |
 
-1. Dashboard Vercel → pilih project → **Settings** → **Environment Variables**
-2. Tambah variabel:
-   - Name: `ANTHROPIC_API_KEY`
-   - Value: key dari step 5.1
-   - Environment: centang **Production**, **Preview**, dan **Development**
-3. **Save**
-4. **Deployments** → deployment terbaru → **Redeploy**
+**Selalu periksa angkanya sebelum menekan Tambah.** OCR pada foto struk memang
+sering salah baca — kertas kusut, cetakan pudar, atau pencahayaan miring bisa
+membuat angka meleset. Bila nominal gagal terbaca sama sekali, aplikasi
+mengatakannya terus terang alih-alih diam.
 
-   > Environment variable hanya terbaca saat deployment dibuat. Tanpa redeploy,
-   > fiturnya tetap melaporkan "belum dikonfigurasi".
+### Tips agar lebih akurat
 
-### 5.3 Cara pakai
+- Letakkan struk di permukaan datar, jangan dipegang
+- Foto tegak lurus dari atas, bukan menyerong
+- Pastikan bagian TOTAL ikut terfoto dan tidak terpotong
+- Cahaya merata, hindari bayangan tangan dan pantulan kilat
 
-Buka tab **Pengeluaran** → **📷 Scan Struk** → foto struknya. Di HP tombol ini
-langsung membuka kamera belakang. Setelah 5–15 detik, field tanggal, jumlah,
-keterangan, kategori, jenis, dan metode bayar terisi sendiri.
+### Catatan pemakaian pertama
 
-**Selalu periksa angkanya sebelum menekan Tambah.** Bila hasil pembacaan
-diragukan, aplikasi menandainya dengan peringatan kuning.
-
-### Perkiraan biaya
-
-Sekitar **$0,015 (±Rp 250) per struk** dengan Claude Opus 5. Seratus struk
-sebulan berarti sekitar Rp 25.000. Untuk menekan biaya, ubah `effort` di
-`api/scan-receipt.js` dari `'medium'` ke `'low'`.
+Scan pertama mengunduh pustaka OCR dan data bahasa Indonesia (**sekitar 5 MB**),
+jadi terasa lambat. Setelah itu tersimpan di cache browser dan scan berikutnya
+langsung jalan. Sebaiknya lakukan scan pertama saat terhubung Wi-Fi.
 
 ### Foto struk
 
@@ -223,7 +216,7 @@ ikut terhapus bila transaksinya dihapus. Foto **tidak** ikut dalam file Backup.
 
 ---
 
-## 📱 Step 6 — Install ke HP
+## 📱 Step 5 — Install ke HP
 
 Butuh URL HTTPS (hasil deploy), tidak bisa dari `localhost`.
 

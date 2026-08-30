@@ -772,7 +772,7 @@
         <button class="scan-btn" id="scanBtn" onclick="document.getElementById('scanInput').click()">
           📷 Scan Struk
         </button>
-        <span class="scan-hint" id="scanHint">Foto struknya, field di bawah terisi otomatis</span>
+        <span class="scan-hint" id="scanHint">Foto struknya — nominal &amp; tanggal diisi otomatis</span>
       </div>
       <!-- capture="environment" membuka kamera belakang langsung di HP -->
       <input type="file" id="scanInput" accept="image/jpeg,image/png,image/webp"
@@ -1660,9 +1660,10 @@ function renderRecurringList() {
 }
 
 // ── SCAN STRUK ─────────────────────────────────
-// Alur: foto -> kompres di browser -> kirim ke /api/scan-receipt (API key ada di
-// server, tidak pernah sampai ke browser) -> isi form. Fotonya baru ikut tersimpan
-// ke Firestore saat entri benar-benar ditambahkan, dan hangus setelah 7 hari.
+// Alur: foto -> kompres di browser -> OCR lokal dengan Tesseract.js -> heuristik
+// mengurai teksnya -> isi form. Semuanya berjalan di perangkat pengguna, tanpa
+// server dan tanpa biaya. Fotonya baru ikut tersimpan ke Firestore saat entri
+// benar-benar ditambahkan, dan hangus setelah 7 hari.
 
 const RECEIPT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const MAKS_SISI_PX   = 1400;   // cukup untuk teks struk, menekan biaya token gambar
@@ -1736,34 +1737,182 @@ window.handleReceiptFile = async function(event) {
     const img = await compressImage(file);
     if (!img) { showToast('Gambar terlalu besar, coba foto ulang.', 'error'); return; }
 
-    const resp = await fetch('/api/scan-receipt', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: img.base64, mediaType: img.mime })
-    });
+    const worker = await getOcrWorker(pesan => { hint.textContent = pesan; });
+    const hasil = await worker.recognize(img.dataUrl);
+    const teks = hasil?.data?.text || '';
 
-    let payload;
-    try { payload = await resp.json(); }
-    catch { showToast('Server membalas dengan format tak terduga.', 'error'); return; }
-
-    if (!resp.ok || !payload.ok) {
-      showToast(payload?.error || 'Gagal membaca struk.', 'error');
-      return;
-    }
-
-    applyReceiptToForm(payload.data);
+    const data = parseReceipt(teks);
+    applyReceiptToForm(data);
     pendingReceipt = img;
-    showReceiptPreview(img.dataUrl, payload.data);
+    showReceiptPreview(img.dataUrl, data);
 
   } catch (e) {
     console.error('Scan struk gagal:', e);
-    showToast('Gagal memproses gambar: ' + e.message, 'error');
+    showToast('Gagal membaca struk: ' + e.message, 'error');
   } finally {
     btn.disabled = false;
     btn.textContent = '📷 Scan Struk';
-    hint.textContent = 'Foto struknya, field di bawah terisi otomatis';
+    hint.textContent = 'Foto struknya — nominal & tanggal diisi otomatis';
   }
 };
+
+// ── OCR (Tesseract.js) ─────────────────────────
+// Dimuat saat pertama dipakai, bukan saat halaman dibuka: pustaka + data bahasa
+// Indonesia berukuran beberapa MB, dan pengguna yang tidak memakai fitur ini
+// tidak perlu menanggungnya. Worker dipakai ulang agar scan kedua langsung jalan.
+const TESSERACT_CDN = 'https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.min.js';
+let ocrWorkerPromise = null;
+
+function loadScript(src) {
+  return new Promise((ok, gagal) => {
+    if (document.querySelector(`script[src="${src}"]`)) return ok();
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = () => ok();
+    s.onerror = () => gagal(new Error('Gagal memuat pustaka OCR. Periksa koneksi internet.'));
+    document.head.appendChild(s);
+  });
+}
+
+function getOcrWorker(onProgress) {
+  if (ocrWorkerPromise) return ocrWorkerPromise;
+  ocrWorkerPromise = (async () => {
+    onProgress?.('Menyiapkan OCR (sekali saja, ±5 MB)…');
+    await loadScript(TESSERACT_CDN);
+    if (typeof Tesseract === 'undefined') throw new Error('Pustaka OCR tidak termuat.');
+    return await Tesseract.createWorker('ind', 1, {
+      logger: m => {
+        if (m.status === 'recognizing text') {
+          onProgress?.(`Membaca struk… ${Math.round((m.progress || 0) * 100)}%`);
+        } else if (m.status) {
+          onProgress?.('Menyiapkan OCR…');
+        }
+      }
+    });
+  })().catch(e => { ocrWorkerPromise = null; throw e; });   // biar bisa dicoba lagi
+  return ocrWorkerPromise;
+}
+
+// ── PARSER STRUK ───────────────────────────────
+// Tesseract hanya menghasilkan teks mentah, tanpa pemahaman isi. Semua di bawah
+// ini adalah heuristik: yang realistis terbaca cuma nominal, tanggal, nama toko,
+// dan tebakan kategori dari kata kunci. Jenis & metode bayar tidak bisa ditebak.
+
+// Nominal Rupiah: "15.000" = lima belas ribu, "15.000,00" = dengan desimal.
+// Titik hampir selalu pemisah ribuan; jumlah digit di belakang pemisah terakhir
+// yang menentukan, karena OCR sering menukar titik dan koma.
+function parseRupiah(raw) {
+  if (!raw) return null;
+  let s = String(raw).replace(/[Rr][Pp]\.?/g, '').replace(/[^\d.,]/g, '').trim();
+  if (!s) return null;
+  const posAkhir = Math.max(s.lastIndexOf('.'), s.lastIndexOf(','));
+  if (posAkhir !== -1) {
+    const ekor = s.slice(posAkhir + 1);
+    if (/^\d{1,2}$/.test(ekor)) s = s.slice(0, posAkhir);   // 1-2 digit = desimal, dibuang
+  }
+  const angka = s.replace(/[.,]/g, '');
+  if (!/^\d+$/.test(angka)) return null;
+  const n = parseInt(angka, 10);
+  return (n >= 100 && n < 1e12) ? n : null;   // di bawah Rp 100 hampir pasti salah baca
+}
+
+const POLA_TOTAL = [
+  /\bgrand\s*total\b/i,
+  /\btotal\s*(bayar|belanja|harga|akhir|tagihan)\b/i,
+  /\bjumlah\s*(bayar|tagihan)\b/i,
+  /\btotal\b/i,
+  /\bjumlah\b/i,
+];
+// Baris yang MIRIP total tapi bukan: uang diserahkan, kembalian, pajak, diskon.
+const POLA_BUKAN_TOTAL = /\b(tunai|cash|kembali(an)?|change|diskon|discount|hemat|potongan|subtotal|sub\s*total|ppn|pajak|tax|dpp|npwp|poin|point|saldo)\b/i;
+
+function extractTotal(text) {
+  const baris = text.split(/\r?\n/).map(b => b.trim()).filter(Boolean);
+  for (const pola of POLA_TOTAL) {
+    // Ditelusuri dari bawah: grand total hampir selalu di bagian akhir struk.
+    for (let i = baris.length - 1; i >= 0; i--) {
+      const b = baris[i];
+      if (!pola.test(b) || POLA_BUKAN_TOTAL.test(b)) continue;
+      const nilai = (b.match(/[\d][\d.,]*/g) || []).map(parseRupiah).filter(n => n !== null);
+      if (nilai.length) return Math.max(...nilai);
+      // Sebagian struk menaruh nominalnya di baris berikutnya.
+      if (i + 1 < baris.length && !POLA_BUKAN_TOTAL.test(baris[i + 1])) {
+        const lanjut = (baris[i + 1].match(/[\d][\d.,]*/g) || []).map(parseRupiah).filter(n => n !== null);
+        if (lanjut.length) return Math.max(...lanjut);
+      }
+    }
+  }
+  return null;
+}
+
+const BULAN_SINGKAT = { jan:1, feb:2, mar:3, apr:4, mei:5, may:5, jun:6, jul:7,
+                        agu:8, aug:8, sep:9, okt:10, oct:10, nov:11, des:12, dec:12 };
+
+function rakitTanggal(y, m, d) {
+  if (y < 100) y += 2000;
+  if (m < 1 || m > 12 || d < 1 || d > 31 || y < 2000 || y > 2100) return null;
+  const iso = `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+  const cek = new Date(iso + 'T00:00:00Z');
+  return (!isNaN(cek) && cek.getUTCDate() === d) ? iso : null;   // tolak 31 Februari dsb
+}
+
+function extractDate(text) {
+  for (const m of text.matchAll(/\b(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})\b/g)) {
+    const t = rakitTanggal(+m[3], +m[2], +m[1]);   // urutan hari-bulan, lazim di Indonesia
+    if (t) return t;
+  }
+  for (const m of text.matchAll(/\b(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})\b/g)) {
+    const t = rakitTanggal(+m[1], +m[2], +m[3]);
+    if (t) return t;
+  }
+  for (const m of text.matchAll(/\b(\d{1,2})\s+([A-Za-z]{3,})\s+(\d{4})\b/g)) {
+    const bl = BULAN_SINGKAT[m[2].slice(0,3).toLowerCase()];
+    if (bl) { const t = rakitTanggal(+m[3], bl, +m[1]); if (t) return t; }
+  }
+  return null;
+}
+
+function extractMerchant(text) {
+  const baris = text.split(/\r?\n/).map(b => b.trim()).filter(Boolean);
+  for (const b of baris.slice(0, 6)) {
+    const bersih = b.replace(/[^A-Za-z0-9\s.'&-]/g, '').trim();
+    if (bersih.length < 3 || bersih.length > 60) continue;
+    if (!/[A-Za-z]{3}/.test(bersih)) continue;
+    if (/^(jl|jalan|no\.|telp|tel|npwp|kasir|struk|nota)\b/i.test(bersih)) continue;
+    // Baris nomor telepon/struk didominasi angka. Rasio dipakai daripada "ada 4
+    // digit berurutan", karena nama toko bisa memuat kode — misalnya
+    // "SPBU PERTAMINA 34.12708" — dan itu tetap nama toko yang benar.
+    const jmlHuruf = (bersih.match(/[A-Za-z]/g) || []).length;
+    const jmlAngka = (bersih.match(/\d/g) || []).length;
+    if (jmlAngka >= jmlHuruf) continue;
+    return bersih.slice(0, 60);
+  }
+  return null;
+}
+
+const KATA_KATEGORI = [
+  ['Makanan',        /\b(resto|restoran|cafe|kopi|coffee|warung|bakso|ayam|nasi|mie|roti|bakery|donat|pizza|burger|catering|kantin|foodcourt|padang|seafood|sate|martabak|indomaret|alfamart|supermarket|swalayan|minimarket|superindo|hypermart|giant|carrefour)\b/i],
+  ['Transportasi',   /\b(pertamina|spbu|shell|bensin|pertalite|pertamax|solar|parkir|tol|grab|gojek|maxim|bluebird|taksi|tiket|kereta|kai|damri|busway)\b/i],
+  ['Kesehatan',      /\b(apotek|apotik|kimia\s*farma|century|guardian|klinik|rumah\s*sakit|rsu|puskesmas|dokter|obat)\b/i],
+  ['Komunikasi',     /\b(pulsa|paket\s*data|telkomsel|indosat|xl\b|axis|tri\b|smartfren|wifi|indihome|internet)\b/i],
+  ['Hiburan',        /\b(bioskop|cinema|xxi|cgv|netflix|spotify|game|karaoke|wisata|tiket\s*masuk)\b/i],
+  ['Kuliah',         /\b(kampus|universitas|spp|ukt|semester|fotokopi|fotocopy|percetakan|toko\s*buku|gramedia|alat\s*tulis)\b/i],
+  ['Tempat Tinggal', /\b(listrik|pln|token|pdam|air\b|sewa|kost|kontrakan|gas\b|elpiji)\b/i],
+];
+
+function guessCategory(text) {
+  for (const [kategori, pola] of KATA_KATEGORI) if (pola.test(text)) return kategori;
+  return null;
+}
+
+function parseReceipt(text) {
+  return {
+    amount: extractTotal(text),
+    date:   extractDate(text),
+    desc:   extractMerchant(text),
+    cat:    guessCategory(text),
+  };
+}
 
 // Hanya isi field yang nilainya cocok dengan opsi dropdown, agar tidak ada
 // pilihan "hantu" yang terlihat terisi padahal tidak tersimpan.
@@ -1779,28 +1928,34 @@ function setIfValid(id, value) {
 
 function applyReceiptToForm(d) {
   if (typeof d.amount === 'number' && d.amount > 0) {
-    document.getElementById('outAmount').value = Math.round(d.amount);
+    document.getElementById('outAmount').value = d.amount;
   }
-  if (d.date && /^\d{4}-\d{2}-\d{2}$/.test(d.date)) setIfValid('outDate', d.date);
-  setIfValid('outDesc',   (d.desc || '').slice(0, 60));
-  setIfValid('outCat',    d.cat);
-  setIfValid('outType',   d.type);
-  setIfValid('outMethod', d.method);
-  setIfValid('outNote',   (d.note || '').slice(0, 120));
+  if (d.date) setIfValid('outDate', d.date);
+  setIfValid('outDesc', (d.desc || '').slice(0, 60));
+  setIfValid('outCat',  d.cat);
+  // Jenis & metode bayar sengaja tidak diisi: OCR tidak bisa menyimpulkannya.
 
-  if (d.confidence === 'rendah') {
-    showToast('⚠️ Struk kurang jelas — cek lagi angkanya sebelum simpan.', 'error');
+  // Nominal adalah satu-satunya field yang benar-benar menentukan. Kalau itu pun
+  // gagal terbaca, katakan terus terang daripada berpura-pura scan berhasil.
+  if (d.amount === null) {
+    showToast('⚠️ Nominal tidak terbaca — isi manual. Coba foto lebih terang & lurus.', 'error');
   } else {
-    showToast('✅ Struk terbaca. Periksa dulu, lalu tambahkan.', 'success');
+    showToast('Nominal terbaca. Wajib dicek — OCR sering salah baca angka.', 'success');
   }
 }
 
 function showReceiptPreview(dataUrl, d) {
-  const wrap = document.getElementById('scanPreview');
+  const terbaca = [
+    d.amount !== null ? 'nominal' : null,
+    d.date   ? 'tanggal' : null,
+    d.desc   ? 'toko'    : null,
+    d.cat    ? 'kategori': null,
+  ].filter(Boolean);
   document.getElementById('scanThumb').src = dataUrl;
   document.getElementById('scanPreviewText').textContent =
-    `Struk terlampir · keyakinan ${d?.confidence || '—'} · tersimpan 7 hari`;
-  wrap.style.display = 'flex';
+    (terbaca.length ? `Terbaca: ${terbaca.join(', ')}` : 'Tidak ada yang terbaca') +
+    ' · foto disimpan 7 hari';
+  document.getElementById('scanPreview').style.display = 'flex';
 }
 
 window.clearPendingReceipt = function() {
