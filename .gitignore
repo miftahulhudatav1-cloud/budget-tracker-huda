@@ -1,0 +1,15 @@
+# Dependensi serverless function — dipasang ulang oleh Vercel saat deploy
+node_modules/
+
+# Variabel lingkungan lokal. ANTHROPIC_API_KEY tidak boleh masuk repo;
+# di produksi nilainya diatur lewat Environment Variables di dashboard Vercel.
+.env
+.env.*
+!.env.example
+
+# Cache Vercel CLI
+.vercel/
+
+# Berkas OS
+Thumbs.db
+.DS_Store

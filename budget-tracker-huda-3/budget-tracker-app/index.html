@@ -337,6 +337,37 @@
   .tab-btn.active-annual{background:var(--gold-dim);border-color:rgba(255,179,71,0.4);color:var(--gold);}
   .tab-btn.active-recurring{background:rgba(79,195,247,0.12);border-color:rgba(79,195,247,0.4);color:#4FC3F7;}
 
+  /* ── SCAN STRUK ─────────────────────────────── */
+  .scan-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px;}
+  .scan-btn{
+    font-family:var(--sans);font-size:13px;font-weight:700;padding:10px 16px;
+    border-radius:10px;cursor:pointer;transition:all 0.2s;
+    background:var(--purple-dim);border:1px solid rgba(179,157,219,0.4);color:var(--purple);
+    display:inline-flex;align-items:center;gap:8px;
+  }
+  .scan-btn:hover:not(:disabled){filter:brightness(1.15);transform:translateY(-1px);}
+  .scan-btn:disabled{opacity:0.6;cursor:progress;transform:none;}
+  .scan-hint{font-size:11px;color:var(--text-muted);}
+  .scan-preview{
+    display:flex;align-items:center;gap:12px;margin-bottom:16px;padding:10px 12px;
+    background:var(--surface2);border:1px solid var(--border);border-radius:10px;
+  }
+  .scan-preview img{width:44px;height:44px;object-fit:cover;border-radius:8px;flex-shrink:0;}
+  .scan-preview-info{display:flex;align-items:center;gap:10px;flex:1;justify-content:space-between;}
+  #scanPreviewText{font-size:11px;color:var(--text-muted);line-height:1.5;}
+  .scan-remove{
+    font-family:var(--sans);font-size:11px;font-weight:600;padding:4px 10px;border-radius:7px;
+    cursor:pointer;background:none;border:1px solid var(--border);color:var(--text-muted);
+    transition:all 0.2s;flex-shrink:0;
+  }
+  .scan-remove:hover{border-color:rgba(255,107,107,0.4);color:var(--red);}
+  .receipt-tag{
+    background:none;border:none;cursor:pointer;padding:0 4px;font-size:13px;
+    opacity:0.75;transition:opacity 0.2s;
+  }
+  .receipt-tag:hover{opacity:1;}
+  #receiptModal img{width:100%;border-radius:12px;display:block;}
+
   /* ── INSIGHT ────────────────────────────────────
      HTML memakai .insight-toggle-bar / .insight-wrap / .insight-card, sementara
      CSS lama hanya mendefinisikan .insight-toggle-btn yang tidak dipakai di mana
@@ -736,6 +767,23 @@
   <!-- EXPENSE -->
   <div id="panelOut" style="display:none">
     <div class="form-panel panel-out">
+      <!-- SCAN STRUK -->
+      <div class="scan-row">
+        <button class="scan-btn" id="scanBtn" onclick="document.getElementById('scanInput').click()">
+          📷 Scan Struk
+        </button>
+        <span class="scan-hint" id="scanHint">Foto struknya, field di bawah terisi otomatis</span>
+      </div>
+      <!-- capture="environment" membuka kamera belakang langsung di HP -->
+      <input type="file" id="scanInput" accept="image/jpeg,image/png,image/webp"
+             capture="environment" style="display:none" onchange="handleReceiptFile(event)">
+      <div class="scan-preview" id="scanPreview" style="display:none">
+        <img id="scanThumb" alt="Pratinjau struk">
+        <div class="scan-preview-info">
+          <span id="scanPreviewText">Struk terlampir</span>
+          <button class="scan-remove" onclick="clearPendingReceipt()">Hapus</button>
+        </div>
+      </div>
       <div class="form-grid">
         <div class="field"><label>Tanggal</label><input type="date" id="outDate"></div>
         <div class="field"><label>Jumlah (Rp)</label><input type="number" id="outAmount" placeholder="0" min="0"></div>
@@ -805,6 +853,15 @@
 
 
 <!-- BACKUP MODAL -->
+<div class="modal-overlay" id="receiptModal">
+  <div class="modal-box">
+    <button class="modal-close" onclick="closeReceiptModal()">✕</button>
+    <div class="modal-title">🧾 Foto Struk</div>
+    <div class="modal-sub" id="receiptModalSub">Memuat…</div>
+    <div id="receiptModalBody"></div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="backupModal">
   <div class="modal-box">
     <button class="modal-close" onclick="closeBackupModal()">✕</button>
@@ -836,7 +893,7 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
 import {
-  getFirestore, collection, addDoc, deleteDoc, doc, getDocs,
+  getFirestore, collection, addDoc, deleteDoc, doc, getDoc, getDocs,
   onSnapshot, query, orderBy, serverTimestamp
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 
@@ -954,6 +1011,7 @@ function buildUI() {
     if(chevron) chevron.style.transform = 'rotate(180deg)';
   }
   subscribeMonth();
+  purgeReceiptsOnce();
 }
 
 // ── YEAR NAV ───────────────────────────────────
@@ -977,6 +1035,15 @@ function switchYear(year) {
   if(sel) sel.value = year;
   subscribeMonth();
   if(currentTab === 'annual') refreshAnnual();
+}
+
+// Dipanggil sekali per sesi setelah login; sengaja tidak di-await agar tidak
+// menunda tampilnya data.
+let receiptsPurged = false;
+function purgeReceiptsOnce() {
+  if(receiptsPurged) return;
+  receiptsPurged = true;
+  purgeExpiredReceipts();
 }
 
 // subscribeMonth() hanya memuat bulan yang sedang dipilih, sehingga rekap tahunan
@@ -1103,12 +1170,20 @@ window.addEntry = async function(type) {
   document.getElementById(type+'Cat').value = '';
   document.getElementById(type+'Type').value = '';
   if(type==='out') document.getElementById('outMethod').value = '';
+  const receiptToSave = (type === 'out') ? pendingReceipt : null;
+  clearPendingReceipt();   // form dikosongkan langsung, foto sudah dipegang di atas
   showToast(type==='in' ? '✅ Pemasukan ditambahkan!' : '📤 Pengeluaran ditambahkan!', 'success');
 
   // ── Save to Firebase in background ──
   try {
     const uid2 = currentUser?.uid || 'guest';
     const colPath = `users/${uid2}/${currentYear}_${month}_${type}`;
+    if(receiptToSave) {
+      pendingReceipt = receiptToSave;
+      const receiptId = await savePendingReceipt(uid2);
+      pendingReceipt = null;
+      if(receiptId) data.receiptId = receiptId;
+    }
     await addDoc(collection(db, colPath), {
       ...data, createdAt: serverTimestamp()
     });
@@ -1127,7 +1202,14 @@ window.deleteEntry = async function(type, id) {
   if(!confirm('Hapus entri ini?')) return;
   try {
     const uid3 = currentUser?.uid || 'guest';
+    // Ambil receiptId sebelum entrinya hilang, agar fotonya tidak tertinggal
+    // sebagai dokumen yatim sampai masa 7 hari habis.
+    const entri = cache[currentYear]?.[month]?.[type]?.find(x => x.id === id);
     await deleteDoc(doc(db, `users/${uid3}/${currentYear}_${month}_${type}`, id));
+    if(entri?.receiptId) {
+      deleteDoc(doc(db, `users/${uid3}/receipts`, entri.receiptId))
+        .catch(e => console.error('Foto struk gagal dihapus:', e));
+    }
     showToast('🗑 Dihapus','error');
   } catch(e) { showToast('Gagal hapus: ' + e.message,'error'); }
 };
@@ -1273,7 +1355,7 @@ function renderTable(type, entries, total, isFiltered=false) {
     const cards = entries.map((e,i) => `
       <div class="entry-card ${isIn?'entry-in':'entry-out'} ${i===0?'new-row':''}">
         <div class="entry-info">
-          <div class="entry-desc">${highlight(e.desc)}</div>
+          <div class="entry-desc">${highlight(e.desc)}${receiptTag(e)}</div>
           <div class="entry-meta">
             ${esc(e.date)||'—'} · <span style="color:${isIn?'var(--green)':'var(--red)'}">${esc(e.cat)||'—'}</span>
             ${!isIn && e.method ? ' · '+esc(e.method) : ''}
@@ -1293,7 +1375,7 @@ function renderTable(type, entries, total, isFiltered=false) {
     // ── DESKTOP: Table layout ────────────────────
     const rows = entries.map((e,i) => `
       <tr class="${i===0?'new-row':''}">
-        <td>${esc(e.date)||'—'}</td><td>${highlight(e.desc)}</td>
+        <td>${esc(e.date)||'—'}</td><td>${highlight(e.desc)}${receiptTag(e)}</td>
         <td><span class="badge ${isIn?'badge-green':'badge-red'}">${esc(e.cat)||'—'}</span></td>
         <td><span class="badge badge-blue">${esc(e.type)||'—'}</span></td>
         ${!isIn?`<td><span class="badge badge-purple">${esc(e.method)||'—'}</span></td>`:''}
@@ -1467,6 +1549,13 @@ function animVal(id,value) {
   el.textContent=fmt(value); el.classList.add('counting');
 }
 
+// Firestore membuat id dokumen dari [A-Za-z0-9], tapi tetap dilewatkan esc()
+// karena nilainya berasal dari dokumen dan akan masuk ke atribut onclick.
+function receiptTag(e) {
+  if (!e.receiptId) return '';
+  return ` <button class="receipt-tag" title="Lihat foto struk" onclick="viewReceipt('${esc(e.receiptId)}')">🧾</button>`;
+}
+
 function highlight(text) {
   const q = getSearchQuery();
   if(!text) return '—';
@@ -1569,6 +1658,227 @@ function renderRecurringList() {
       <button class="recurring-del" onclick="deleteRecurring(${r.id})">✕</button>
     </div>`).join('');
 }
+
+// ── SCAN STRUK ─────────────────────────────────
+// Alur: foto -> kompres di browser -> kirim ke /api/scan-receipt (API key ada di
+// server, tidak pernah sampai ke browser) -> isi form. Fotonya baru ikut tersimpan
+// ke Firestore saat entri benar-benar ditambahkan, dan hangus setelah 7 hari.
+
+const RECEIPT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const MAKS_SISI_PX   = 1400;   // cukup untuk teks struk, menekan biaya token gambar
+const TARGET_BYTES   = 600_000; // jauh di bawah batas 1 MiB per dokumen Firestore
+
+let pendingReceipt = null;     // { base64, mime, dataUrl } sebelum entri disimpan
+
+// Foto dari HP hampir selalu membawa rotasi EXIF. createImageBitmap tidak
+// menerapkannya kecuali diminta, dan struk yang masuk dalam posisi miring jauh
+// lebih sering salah dibaca — jadi orientasinya diambil dari gambar.
+// Sebagian browser lama menolak opsi itu, dan <img> selalu menerapkan EXIF
+// sendiri, sehingga dipakai sebagai cadangan.
+async function decodeImage(file) {
+  try {
+    return await createImageBitmap(file, { imageOrientation: 'from-image' });
+  } catch {
+    const url = URL.createObjectURL(file);
+    try {
+      const img = new Image();
+      await new Promise((ok, gagal) => {
+        img.onload = ok;
+        img.onerror = () => gagal(new Error('Format gambar tidak didukung browser ini.'));
+        img.src = url;
+      });
+      return img;   // punya naturalWidth/naturalHeight, bisa dipakai drawImage
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+}
+
+// Kecilkan dan kompres lewat canvas. Kualitas diturunkan bertahap sampai muat.
+async function compressImage(file) {
+  const src = await decodeImage(file);
+  const sw = src.width  || src.naturalWidth;
+  const sh = src.height || src.naturalHeight;
+  if (!sw || !sh) throw new Error('Gambar tidak bisa dibaca.');
+
+  const skala = Math.min(1, MAKS_SISI_PX / Math.max(sw, sh));
+  const w = Math.round(sw * skala);
+  const h = Math.round(sh * skala);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#fff';           // JPEG tidak punya alpha; cegah latar hitam
+  ctx.fillRect(0, 0, w, h);
+  ctx.drawImage(src, 0, 0, w, h);
+  src.close?.();
+
+  for (const q of [0.75, 0.6, 0.45, 0.3]) {
+    const dataUrl = canvas.toDataURL('image/jpeg', q);
+    const base64  = dataUrl.split(',')[1];
+    if (base64.length <= TARGET_BYTES) return { dataUrl, base64, mime: 'image/jpeg' };
+  }
+  return null;   // gambar tetap terlalu besar walau kualitas terendah
+}
+
+window.handleReceiptFile = async function(event) {
+  const file = event.target.files?.[0];
+  event.target.value = '';           // agar memilih file yang sama lagi tetap memicu onchange
+  if (!file) return;
+
+  const btn  = document.getElementById('scanBtn');
+  const hint = document.getElementById('scanHint');
+  btn.disabled = true;
+  btn.textContent = '⏳ Membaca struk…';
+  hint.textContent = 'Biasanya 5–15 detik';
+
+  try {
+    const img = await compressImage(file);
+    if (!img) { showToast('Gambar terlalu besar, coba foto ulang.', 'error'); return; }
+
+    const resp = await fetch('/api/scan-receipt', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: img.base64, mediaType: img.mime })
+    });
+
+    let payload;
+    try { payload = await resp.json(); }
+    catch { showToast('Server membalas dengan format tak terduga.', 'error'); return; }
+
+    if (!resp.ok || !payload.ok) {
+      showToast(payload?.error || 'Gagal membaca struk.', 'error');
+      return;
+    }
+
+    applyReceiptToForm(payload.data);
+    pendingReceipt = img;
+    showReceiptPreview(img.dataUrl, payload.data);
+
+  } catch (e) {
+    console.error('Scan struk gagal:', e);
+    showToast('Gagal memproses gambar: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '📷 Scan Struk';
+    hint.textContent = 'Foto struknya, field di bawah terisi otomatis';
+  }
+};
+
+// Hanya isi field yang nilainya cocok dengan opsi dropdown, agar tidak ada
+// pilihan "hantu" yang terlihat terisi padahal tidak tersimpan.
+function setIfValid(id, value) {
+  const el = document.getElementById(id);
+  if (!el || !value) return;
+  if (el.tagName === 'SELECT') {
+    const cocok = [...el.options].some(o => o.value === value || o.text === value);
+    if (!cocok) return;
+  }
+  el.value = value;
+}
+
+function applyReceiptToForm(d) {
+  if (typeof d.amount === 'number' && d.amount > 0) {
+    document.getElementById('outAmount').value = Math.round(d.amount);
+  }
+  if (d.date && /^\d{4}-\d{2}-\d{2}$/.test(d.date)) setIfValid('outDate', d.date);
+  setIfValid('outDesc',   (d.desc || '').slice(0, 60));
+  setIfValid('outCat',    d.cat);
+  setIfValid('outType',   d.type);
+  setIfValid('outMethod', d.method);
+  setIfValid('outNote',   (d.note || '').slice(0, 120));
+
+  if (d.confidence === 'rendah') {
+    showToast('⚠️ Struk kurang jelas — cek lagi angkanya sebelum simpan.', 'error');
+  } else {
+    showToast('✅ Struk terbaca. Periksa dulu, lalu tambahkan.', 'success');
+  }
+}
+
+function showReceiptPreview(dataUrl, d) {
+  const wrap = document.getElementById('scanPreview');
+  document.getElementById('scanThumb').src = dataUrl;
+  document.getElementById('scanPreviewText').textContent =
+    `Struk terlampir · keyakinan ${d?.confidence || '—'} · tersimpan 7 hari`;
+  wrap.style.display = 'flex';
+}
+
+window.clearPendingReceipt = function() {
+  pendingReceipt = null;
+  document.getElementById('scanPreview').style.display = 'none';
+  document.getElementById('scanThumb').src = '';
+};
+
+// Simpan foto sebagai dokumen tersendiri, lalu kembalikan id-nya untuk ditempel
+// ke entri. Gagal simpan foto tidak boleh membatalkan pencatatan transaksi.
+async function savePendingReceipt(uid) {
+  if (!pendingReceipt) return null;
+  try {
+    const ref = await addDoc(collection(db, `users/${uid}/receipts`), {
+      image: pendingReceipt.base64,
+      mime:  pendingReceipt.mime,
+      createdAt: serverTimestamp(),
+      expiresAt: Date.now() + RECEIPT_TTL_MS
+    });
+    return ref.id;
+  } catch (e) {
+    console.error('Gagal menyimpan foto struk:', e);
+    showToast('Transaksi tersimpan, tapi foto struknya gagal diunggah.', 'error');
+    return null;
+  }
+}
+
+// Firestore TTL bawaan butuh paket berbayar, jadi kedaluwarsa dibersihkan sendiri
+// saat aplikasi dibuka. Dijalankan sekali per sesi dan tidak memblokir apa pun.
+async function purgeExpiredReceipts() {
+  const uid = currentUser?.uid;
+  if (!uid || !db) return;
+  try {
+    const snap = await getDocs(collection(db, `users/${uid}/receipts`));
+    const now = Date.now();
+    const basi = snap.docs.filter(d => (d.data().expiresAt ?? 0) < now);
+    if (!basi.length) return;
+    await Promise.all(basi.map(d => deleteDoc(doc(db, `users/${uid}/receipts`, d.id))));
+    console.info(`${basi.length} foto struk kedaluwarsa dihapus.`);
+  } catch (e) {
+    console.error('Gagal membersihkan struk kedaluwarsa:', e);
+  }
+}
+
+window.viewReceipt = async function(receiptId) {
+  const modal = document.getElementById('receiptModal');
+  const sub   = document.getElementById('receiptModalSub');
+  const body  = document.getElementById('receiptModalBody');
+  body.innerHTML = '';
+  sub.textContent = 'Memuat…';
+  modal.classList.add('show');
+
+  const uid = currentUser?.uid;
+  if (!uid) { sub.textContent = 'Sesi tidak aktif.'; return; }
+
+  try {
+    const snap = await getDoc(doc(db, `users/${uid}/receipts`, receiptId));
+    if (!snap.exists()) {
+      sub.textContent = 'Foto struk ini sudah dihapus (lewat 7 hari).';
+      return;
+    }
+    const d = snap.data();
+    const sisaHari = Math.max(0, Math.ceil(((d.expiresAt ?? 0) - Date.now()) / 86400000));
+    sub.textContent = sisaHari > 0 ? `Terhapus otomatis dalam ${sisaHari} hari` : 'Kedaluwarsa hari ini';
+    const img = document.createElement('img');
+    img.src = `data:${d.mime || 'image/jpeg'};base64,${d.image}`;
+    img.alt = 'Foto struk';
+    body.appendChild(img);
+  } catch (e) {
+    console.error('Gagal memuat struk:', e);
+    sub.textContent = 'Gagal memuat foto struk.';
+  }
+};
+
+window.closeReceiptModal = function() {
+  document.getElementById('receiptModal').classList.remove('show');
+  document.getElementById('receiptModalBody').innerHTML = '';
+};
 
 // ── BUDGET LIMITS ──────────────────────────────
 const OUT_CATS = ['Tempat Tinggal','Makanan','Transportasi','Kuliah','Komunikasi','Kesehatan','Hiburan','Tabungan','Lainnya'];
