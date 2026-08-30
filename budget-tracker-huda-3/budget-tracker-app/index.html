@@ -434,6 +434,7 @@
   .tab-btn.active-in{background:var(--green-dim);border-color:rgba(0,214,143,0.4);color:var(--green);}
   .tab-btn.active-out{background:var(--red-dim);border-color:rgba(255,107,107,0.4);color:var(--red);}
   .tab-btn.active-annual{background:var(--gold-dim);border-color:rgba(255,179,71,0.4);color:var(--gold);}
+  .tab-btn.active-recurring{background:rgba(79,195,247,0.12);border-color:rgba(79,195,247,0.4);color:#4FC3F7;}
 
   /* FORM */
   .form-panel{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:18px;margin-bottom:14px;animation:fade-up 0.5s ease both;}
@@ -964,8 +965,17 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
-let db, auth, currentUser = null, currentMonth = new Date().getMonth(), currentTab = 'in', currentYear = 2026;
+const THIS_YEAR = new Date().getFullYear();
+// Rentang tahun yang tersedia di dropdown & dicakup backup: 2 tahun ke belakang, 8 ke depan.
+function yearRange() { return Array.from({length:11}, (_, i) => THIS_YEAR - 2 + i); }
+let db, auth, currentUser = null, currentMonth = new Date().getMonth(), currentTab = 'in', currentYear = THIS_YEAR;
 let unsubIn = null, unsubOut = null;
+
+// Escape teks yang dimasukkan user sebelum di-render lewat innerHTML
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g,
+    c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
 
 // In-memory cache per year/month
 const cache = {};
@@ -988,9 +998,9 @@ window.saveConfig = function() {
     authDomain:  document.getElementById('cfgAuthDomain').value.trim(),
     projectId:   document.getElementById('cfgProjectId').value.trim(),
     appId:       document.getElementById('cfgAppId').value.trim(),
-    storageBucket: document.getElementById('cfgProjectId').value.trim() + '.appspot.com',
-    messagingSenderId: '000000000000',
   };
+  // storageBucket & messagingSenderId sengaja tidak diisi: app ini hanya memakai
+  // Auth + Firestore. Menebak nilainya justru menghasilkan config yang salah.
   if(!cfg.apiKey || !cfg.authDomain || !cfg.projectId || !cfg.appId) {
     document.getElementById('setupErr').style.display = 'block'; return;
   }
@@ -1049,6 +1059,7 @@ function buildUI() {
 
   const nav = document.getElementById('monthNav');
   if(!nav) return;
+  nav.innerHTML = '';   // cegah tombol bulan tergandakan bila buildUI dipanggil lagi
   MONTHS.forEach((m, i) => {
     const btn = document.createElement('button');
     btn.className = 'month-btn' + (i === currentMonth ? ' active' : '');
@@ -1060,13 +1071,11 @@ function buildUI() {
   ['inDate','outDate'].forEach(id => { document.getElementById(id).value = today; });
   // Restore insight open state
   if(localStorage.getItem('insightOpen') === '1') {
-    setTimeout(() => {
-      const section = document.getElementById('insightSection');
-      const btn = document.getElementById('insightToggleBtn');
-      if(section) section.style.display = 'block';
-      if(btn) btn.classList.add('open');
-      generateInsights();
-    }, 200);
+    window.insightOpen = true;
+    const section = document.getElementById('insightSection');
+    const chevron = document.getElementById('insightChevron');
+    if(section) section.style.display = 'block';
+    if(chevron) chevron.style.transform = 'rotate(180deg)';
   }
   subscribeMonth();
 }
@@ -1076,7 +1085,7 @@ function buildYearNav() {
   const sel = document.getElementById('yearSelect');
   if(!sel) return;
   sel.innerHTML = '';
-  const years = Array.from({length: 11}, (_, i) => 2026 + i);
+  const years = yearRange();
   years.forEach(y => {
     const opt = document.createElement('option');
     opt.value = y; opt.textContent = y;
@@ -1091,6 +1100,37 @@ function switchYear(year) {
   const sel = document.getElementById('yearSelect');
   if(sel) sel.value = year;
   subscribeMonth();
+  if(currentTab === 'annual') refreshAnnual();
+}
+
+// subscribeMonth() hanya memuat bulan yang sedang dipilih, sehingga rekap tahunan
+// dan grafik dulunya selalu nol untuk 11 bulan lainnya. Ini memuat sisa bulan
+// sekali jalan (getDocs, bukan listener) saat memang dibutuhkan.
+async function loadYearIntoCache(year) {
+  initCache(year);
+  const uid = currentUser?.uid;
+  if(!uid || !db) return;
+  const liveMonth = (year === currentYear) ? MONTHS[currentMonth] : null;
+  await Promise.all(MONTHS.map(async m => {
+    if(m === liveMonth) return;   // bulan aktif sudah dijaga listener realtime
+    try {
+      const [snapIn, snapOut] = await Promise.all([
+        getDocs(collection(db, `users/${uid}/${year}_${m}_in`)),
+        getDocs(collection(db, `users/${uid}/${year}_${m}_out`))
+      ]);
+      cache[year][m].in  = snapIn.docs.map(d => ({id: d.id, ...d.data()}));
+      cache[year][m].out = snapOut.docs.map(d => ({id: d.id, ...d.data()}));
+    } catch(e) {
+      console.error(`Gagal memuat ${year} ${m}:`, e);
+    }
+  }));
+}
+
+async function refreshAnnual() {
+  setSyncStatus('syncing');
+  await loadYearIntoCache(currentYear);
+  setSyncStatus('synced');
+  renderAnnual();
 }
 
 // ── FIRESTORE REALTIME ─────────────────────────
@@ -1217,9 +1257,6 @@ function render() {
 
   renderFilteredTable('in');
   renderFilteredTable('out');
-  // Re-generate insights if panel is open
-  const _insightSection = document.getElementById('insightSection');
-  if(_insightSection && _insightSection.style.display !== 'none') generateInsights();
   window.renderInsights();
   if(currentTab==='out') renderBudgetGrid();
   if(currentTab==='annual') renderAnnual();
@@ -1233,9 +1270,6 @@ window.onSearch = function() {
   document.getElementById('searchClear').style.display = q ? 'block' : 'none';
   renderFilteredTable('in');
   renderFilteredTable('out');
-  // Re-generate insights if panel is open
-  const _insightSection = document.getElementById('insightSection');
-  if(_insightSection && _insightSection.style.display !== 'none') generateInsights();
   window.renderInsights();
   if(currentTab==='out') renderBudgetGrid();
 };
@@ -1245,9 +1279,6 @@ window.clearSearch = function() {
   document.getElementById('searchClear').style.display = 'none';
   renderFilteredTable('in');
   renderFilteredTable('out');
-  // Re-generate insights if panel is open
-  const _insightSection = document.getElementById('insightSection');
-  if(_insightSection && _insightSection.style.display !== 'none') generateInsights();
   window.renderInsights();
   if(currentTab==='out') renderBudgetGrid();
 };
@@ -1319,8 +1350,8 @@ function renderFilteredTable(type) {
 function renderTable(type, entries, total, isFiltered=false) {
   const wrap=document.getElementById(type+'TableWrap');
   if(!wrap) return;
-  const countEl2=document.getElementById(type+'Count');
-  if(countEl2) countEl2.textContent=entries.length+' entri';
+  // Jumlah entri sudah diset renderFilteredTable() dalam bentuk "3 / 10 entri";
+  // jangan ditimpa di sini atau indikator hasil filter tidak pernah terlihat.
   if(entries.length===0) {
     wrap.innerHTML=`<div class="empty-state"><div class="icon">${isFiltered?'🔍':type==='in'?'📭':'🧾'}</div><p>${isFiltered?'Tidak ada data yang cocok dengan filter':'Belum ada '+( type==='in'?'pemasukan':'pengeluaran')+' bulan ini'}</p></div>`;
     return;
@@ -1335,8 +1366,8 @@ function renderTable(type, entries, total, isFiltered=false) {
         <div class="entry-info">
           <div class="entry-desc">${highlight(e.desc)}</div>
           <div class="entry-meta">
-            ${e.date||'—'} · <span style="color:${isIn?'var(--green)':'var(--red)'}">${e.cat||'—'}</span>
-            ${!isIn && e.method ? ' · '+e.method : ''}
+            ${esc(e.date)||'—'} · <span style="color:${isIn?'var(--green)':'var(--red)'}">${esc(e.cat)||'—'}</span>
+            ${!isIn && e.method ? ' · '+esc(e.method) : ''}
           </div>
         </div>
         <span class="entry-amount ${isIn?'in':'out'}">${fmt(e.amount)}</span>
@@ -1353,10 +1384,10 @@ function renderTable(type, entries, total, isFiltered=false) {
     // ── DESKTOP: Table layout ────────────────────
     const rows = entries.map((e,i) => `
       <tr class="${i===0?'new-row':''}">
-        <td>${e.date||'—'}</td><td>${highlight(e.desc)}</td>
-        <td><span class="badge ${isIn?'badge-green':'badge-red'}">${e.cat||'—'}</span></td>
-        <td><span class="badge badge-blue">${e.type||'—'}</span></td>
-        ${!isIn?`<td><span class="badge badge-purple">${e.method||'—'}</span></td>`:''}
+        <td>${esc(e.date)||'—'}</td><td>${highlight(e.desc)}</td>
+        <td><span class="badge ${isIn?'badge-green':'badge-red'}">${esc(e.cat)||'—'}</span></td>
+        <td><span class="badge badge-blue">${esc(e.type)||'—'}</span></td>
+        ${!isIn?`<td><span class="badge badge-purple">${esc(e.method)||'—'}</span></td>`:''}
         <td class="${isIn?'amount-in':'amount-out'}">${fmt(e.amount)}</td>
         <td><button class="del-btn" onclick="deleteEntry('${type}','${e.id}')">✕</button></td>
       </tr>`).join('');
@@ -1479,8 +1510,9 @@ window.setTab = function(tab) {
     if(i===0&&tab==='in')b.className+=' active-in';
     if(i===1&&tab==='out')b.className+=' active-out';
     if(i===2&&tab==='annual')b.className+=' active-annual';
+    if(i===3&&tab==='recurring')b.className+=' active-recurring';
   });
-  if(tab==='annual') renderAnnual();
+  if(tab==='annual') refreshAnnual();
   if(tab==='out') renderBudgetGrid();
   if(tab==='recurring') renderRecurringList();
 };
@@ -1528,10 +1560,15 @@ function animVal(id,value) {
 
 function highlight(text) {
   const q = getSearchQuery();
-  if(!q || !text) return text || '—';
+  if(!text) return '—';
+  if(!q) return esc(text);
   const idx = text.toLowerCase().indexOf(q);
-  if(idx === -1) return text;
-  return text.slice(0,idx) + `<mark style="background:rgba(0,214,143,0.25);color:var(--green);border-radius:3px;padding:0 2px">${text.slice(idx,idx+q.length)}</mark>` + text.slice(idx+q.length);
+  if(idx === -1) return esc(text);
+  // Escape tiap potongan secara terpisah supaya <mark> tetap utuh sementara
+  // teks dari user tidak pernah diperlakukan sebagai HTML.
+  return esc(text.slice(0,idx))
+    + `<mark style="background:rgba(0,214,143,0.25);color:var(--green);border-radius:3px;padding:0 2px">${esc(text.slice(idx,idx+q.length))}</mark>`
+    + esc(text.slice(idx+q.length));
 }
 
 
@@ -1615,8 +1652,8 @@ function renderRecurringList() {
   el.innerHTML = list.map(r=>`
     <div class="recurring-item ${r.type==='in'?'in-item':'out-item'}">
       <div class="recurring-info">
-        <div class="recurring-name">${r.name}</div>
-        <div class="recurring-meta">Setiap tgl ${r.day} · ${r.cat||'—'} · ${r.type==='in'?'Pemasukan':'Pengeluaran'}</div>
+        <div class="recurring-name">${esc(r.name)}</div>
+        <div class="recurring-meta">Setiap tgl ${esc(r.day)} · ${esc(r.cat)||'—'} · ${r.type==='in'?'Pemasukan':'Pengeluaran'}</div>
       </div>
       <span class="recurring-amount ${r.type}">${fmt(r.amount)}</span>
       <button class="recurring-apply" onclick="applyRecurring(${r.id})">▶ Terapkan</button>
@@ -1711,112 +1748,8 @@ window.applyBudgetLimit = function(cat) {
   showToast(`🎯 Limit ${cat} disimpan!`, 'success');
 };
 
-// ── EXPORT EXCEL ───────────────────────────────
-
-
-
-// ── INSIGHT & TIPS OTOMATIS ──────────────────────
-function generateInsights() {
-  const month    = MONTHS[currentMonth];
-  const prevMonth = MONTHS[currentMonth > 0 ? currentMonth-1 : 11];
-  const prevYear = currentMonth > 0 ? currentYear : currentYear-1;
-
-  initCache(currentYear);
-  initCache(prevYear);
-
-  const ins   = cache[currentYear][month].in;
-  const outs  = cache[currentYear][month].out;
-  const prevOuts = cache[prevYear]?.[prevMonth]?.out || [];
-
-  const totalIn  = ins.reduce((s,e)=>s+e.amount,0);
-  const totalOut = outs.reduce((s,e)=>s+e.amount,0);
-  const savings  = totalIn - totalOut;
-  const savePct  = totalIn > 0 ? (savings/totalIn)*100 : 0;
-  const limits   = getBudgetLimits();
-
-  const insights = [];
-
-  // ── Savings rate insight ──────────────────────
-  if(totalIn > 0) {
-    if(savePct >= 30) {
-      insights.push({type:'good', icon:'🏆', text:`Luar biasa! Kamu berhasil menabung <b>${savePct.toFixed(0)}%</b> dari pemasukan bulan ini. Jauh di atas target 20%!`});
-    } else if(savePct >= 20) {
-      insights.push({type:'good', icon:'✅', text:`Target tabungan 20% tercapai! Kamu menabung <b>${fmt(savings)}</b> bulan ini. Pertahankan!`});
-    } else if(savePct > 0) {
-      insights.push({type:'warn', icon:'📊', text:`Tabungan bulan ini <b>${savePct.toFixed(0)}%</b> dari pemasukan. Coba kurangi pengeluaran <b>${fmt(totalIn*0.2 - savings)}</b> lagi untuk capai target 20%.`});
-    } else if(totalOut > totalIn) {
-      insights.push({type:'bad', icon:'🚨', text:`Pengeluaran melebihi pemasukan sebesar <b>${fmt(totalOut-totalIn)}</b>. Perlu evaluasi segera!`});
-    }
-  }
-
-  // ── Category comparison with last month ───────
-  const cats = ['Makanan','Transportasi','Hiburan','Komunikasi','Kuliah','Kesehatan'];
-  cats.forEach(cat => {
-    const thisTotal = outs.filter(e=>e.cat===cat).reduce((s,e)=>s+e.amount,0);
-    const prevTotal = prevOuts.filter(e=>e.cat===cat).reduce((s,e)=>s+e.amount,0);
-    if(thisTotal > 0 && prevTotal > 0) {
-      const diff = ((thisTotal - prevTotal) / prevTotal) * 100;
-      if(diff >= 30) {
-        insights.push({type:'warn', icon:'📈', text:`Pengeluaran <b>${cat}</b> naik <b>${diff.toFixed(0)}%</b> dari bulan lalu (${fmt(prevTotal)} → ${fmt(thisTotal)}). Cek kembali kebutuhanmu.`});
-      } else if(diff <= -20) {
-        insights.push({type:'good', icon:'📉', text:`Pengeluaran <b>${cat}</b> turun <b>${Math.abs(diff).toFixed(0)}%</b> dari bulan lalu! Hemat <b>${fmt(prevTotal-thisTotal)}</b>. 🎉`});
-      }
-    }
-  });
-
-  // ── Budget limit warnings ─────────────────────
-  Object.entries(limits).forEach(([cat, limit]) => {
-    if(!limit) return;
-    const spent = outs.filter(e=>e.cat===cat).reduce((s,e)=>s+e.amount,0);
-    const pct   = (spent/limit)*100;
-    if(pct >= 100) {
-      insights.push({type:'bad', icon:'🚫', text:`Budget <b>${cat}</b> sudah habis! Terpakai <b>${fmt(spent)}</b> dari limit <b>${fmt(limit)}</b>.`});
-    } else if(pct >= 80) {
-      insights.push({type:'warn', icon:'⚠️', text:`Budget <b>${cat}</b> hampir habis — ${pct.toFixed(0)}% terpakai (${fmt(spent)} dari ${fmt(limit)}).`});
-    }
-  });
-
-  // ── Biggest expense this month ────────────────
-  if(outs.length > 0) {
-    const biggest = outs.reduce((a,b)=>a.amount>b.amount?a:b);
-    if(biggest.amount > totalOut * 0.3) {
-      insights.push({type:'info', icon:'🔍', text:`Pengeluaran terbesar bulan ini: <b>${biggest.desc}</b> sebesar <b>${fmt(biggest.amount)}</b> (${((biggest.amount/totalOut)*100).toFixed(0)}% dari total).`});
-    }
-  }
-
-  // ── No transactions yet ───────────────────────
-  if(ins.length === 0 && outs.length === 0) {
-    insights.push({type:'info', icon:'📝', text:`Belum ada transaksi bulan ini. Mulai catat pemasukan dan pengeluaranmu!`});
-  }
-
-  // ── Frequency tip ─────────────────────────────
-  if(outs.length > 0 && outs.length < 5) {
-    insights.push({type:'info', icon:'💡', text:`Baru ada <b>${outs.length} pengeluaran</b> tercatat. Pastikan semua pengeluaran sudah dicatat untuk hasil analisis yang akurat.`});
-  }
-
-  // ── Render insights ───────────────────────────
-  const section = document.getElementById('insightSection');
-  const cards   = document.getElementById('insightCards');
-  if(!section || !cards) return;
-
-  if(insights.length === 0) {
-    section.style.display = 'none';
-    return;
-  }
-
-  section.style.display = 'block';
-  cards.innerHTML = insights.slice(0,4).map(i=>
-    `<div class="insight-card ${i.type}">
-      <span class="insight-icon">${i.icon}</span>
-      <span class="insight-text">${i.text}</span>
-    </div>`
-  ).join('');
-}
-
 
 // ── INSIGHT ENGINE ──────────────────────────────
-// renderInsights placeholder - real one below
-window._renderInsightsPlaceholder = true;
 window.renderInsights = function() {
   if(!window.insightOpen) return;
   const el = document.getElementById('insightCards');
@@ -1862,7 +1795,7 @@ window.renderInsights = function() {
   if(sortedCats.length > 0) {
     const [topCat, topAmt] = sortedCats[0];
     const topPct = totalOut > 0 ? ((topAmt/totalOut)*100).toFixed(0) : 0;
-    insights.push({type:'tip', icon:'📊', text:`Pengeluaran terbesar bulan ini: <strong>${topCat}</strong> sebesar <strong>${fmt(topAmt)}</strong> (${topPct}% dari total pengeluaran).`});
+    insights.push({type:'tip', icon:'📊', text:`Pengeluaran terbesar bulan ini: <strong>${esc(topCat)}</strong> sebesar <strong>${fmt(topAmt)}</strong> (${topPct}% dari total pengeluaran).`});
   }
 
   // 3. Bandingkan dengan bulan lalu
@@ -1875,9 +1808,9 @@ window.renderInsights = function() {
       if(prevAmt > 0) {
         const diff = ((amt - prevAmt) / prevAmt) * 100;
         if(diff >= 20) {
-          insights.push({type:'warn', icon:'📈', text:`Pengeluaran <strong>${cat}</strong> naik <strong>${diff.toFixed(0)}%</strong> dari bulan lalu (${fmt(prevAmt)} → ${fmt(amt)}).`});
+          insights.push({type:'warn', icon:'📈', text:`Pengeluaran <strong>${esc(cat)}</strong> naik <strong>${diff.toFixed(0)}%</strong> dari bulan lalu (${fmt(prevAmt)} → ${fmt(amt)}).`});
         } else if(diff <= -20) {
-          insights.push({type:'good', icon:'📉', text:`Pengeluaran <strong>${cat}</strong> turun <strong>${Math.abs(diff).toFixed(0)}%</strong> dari bulan lalu! Hemat <strong>${fmt(prevAmt-amt)}</strong>. 🎉`});
+          insights.push({type:'good', icon:'📉', text:`Pengeluaran <strong>${esc(cat)}</strong> turun <strong>${Math.abs(diff).toFixed(0)}%</strong> dari bulan lalu! Hemat <strong>${fmt(prevAmt-amt)}</strong>. 🎉`});
         }
       }
     });
@@ -1885,12 +1818,13 @@ window.renderInsights = function() {
 
   // 4. Budget limit warnings
   Object.entries(limits).forEach(([cat, limit]) => {
+    if(!limit || limit <= 0) return;   // limit 0 -> pembagian nol -> "HABIS" palsu
     const spent = catTotals[cat] || 0;
     const pct = (spent/limit)*100;
     if(pct >= 100) {
-      insights.push({type:'bad', icon:'🚨', text:`Budget <strong>${cat}</strong> sudah <strong>HABIS</strong>! Terpakai ${fmt(spent)} dari limit ${fmt(limit)}.`});
+      insights.push({type:'bad', icon:'🚨', text:`Budget <strong>${esc(cat)}</strong> sudah <strong>HABIS</strong>! Terpakai ${fmt(spent)} dari limit ${fmt(limit)}.`});
     } else if(pct >= 80) {
-      insights.push({type:'warn', icon:'⚠️', text:`Budget <strong>${cat}</strong> hampir habis — ${pct.toFixed(0)}% terpakai. Sisa <strong>${fmt(limit-spent)}</strong>.`});
+      insights.push({type:'warn', icon:'⚠️', text:`Budget <strong>${esc(cat)}</strong> hampir habis — ${pct.toFixed(0)}% terpakai. Sisa <strong>${fmt(limit-spent)}</strong>.`});
     }
   });
 
@@ -1905,7 +1839,7 @@ window.renderInsights = function() {
     };
     const topCat = sortedCats[0][0];
     if(tips[topCat]) {
-      insights.push({type:'tip', icon:'💡', text:`<strong>Tips ${topCat}:</strong> ${tips[topCat]}`});
+      insights.push({type:'tip', icon:'💡', text:`<strong>Tips ${esc(topCat)}:</strong> ${tips[topCat]}`});
     }
   }
 
@@ -1987,20 +1921,20 @@ window.exportToPDF = function() {
 
   const inRows = ins.length > 0
     ? ins.map(e=>`<tr>
-        <td>${e.date||'—'}</td>
-        <td>${e.desc}</td>
-        <td><span class="badge badge-in">${e.cat||'—'}</span></td>
-        <td>${e.type||'—'}</td>
+        <td>${esc(e.date)||'—'}</td>
+        <td>${esc(e.desc)}</td>
+        <td><span class="badge badge-in">${esc(e.cat)||'—'}</span></td>
+        <td>${esc(e.type)||'—'}</td>
         <td class="amount-in">${fmt(e.amount)}</td>
       </tr>`).join('') + `<tr class="total-row"><td colspan="4">Total Pemasukan</td><td class="amount-in">${fmt(totalIn)}</td></tr>`
     : '<tr><td colspan="5" class="empty">Belum ada data pemasukan</td></tr>';
 
   const outRows = outs.length > 0
     ? outs.map(e=>`<tr>
-        <td>${e.date||'—'}</td>
-        <td>${e.desc}</td>
-        <td><span class="badge badge-out">${e.cat||'—'}</span></td>
-        <td>${e.method||'—'}</td>
+        <td>${esc(e.date)||'—'}</td>
+        <td>${esc(e.desc)}</td>
+        <td><span class="badge badge-out">${esc(e.cat)||'—'}</span></td>
+        <td>${esc(e.method)||'—'}</td>
         <td class="amount-out">${fmt(e.amount)}</td>
       </tr>`).join('') + `<tr class="total-row"><td colspan="4">Total Pengeluaran</td><td class="amount-out">${fmt(totalOut)}</td></tr>`
     : '<tr><td colspan="5" class="empty">Belum ada data pengeluaran</td></tr>';
@@ -2057,12 +1991,17 @@ window.exportToPDF = function() {
 
   // Open print dialog
   const win = window.open('', '_blank');
+  if(!win) {
+    showToast('Popup diblokir browser. Izinkan popup untuk situs ini lalu coba lagi.', 'error');
+    return;
+  }
   win.document.write(html);
   win.document.close();
-  win.onload = () => {
-    win.focus();
-    win.print();
-  };
+  // Jangan bergantung pada win.onload: setelah document.close() event load
+  // sering sudah lewat, sehingga print() tidak pernah terpanggil.
+  const doPrint = () => { try { win.focus(); win.print(); } catch(e) { console.error('Print gagal:', e); } };
+  if(win.document.readyState === 'complete') setTimeout(doPrint, 250);
+  else win.addEventListener('load', () => setTimeout(doPrint, 250));
 };
 
 // ── BACKUP & RESTORE ────────────────────────────
@@ -2074,7 +2013,6 @@ window.closeBackupModal = function() {
 };
 
 window.exportAllData = async function() {
-  const toast = (msg, type) => window.showToast ? window.showToast(msg, type) : alert(msg);
   const toastEl = document.getElementById('toast');
   const showT = (msg, type) => {
     if(toastEl) {
@@ -2093,16 +2031,16 @@ window.exportAllData = async function() {
       years: {}
     };
 
-    const years = Array.from({length:11}, (_,i)=>2026+i);
-    for (const year of years) {
+    const years = yearRange();
+    // Semua bulan diambil paralel. Versi lama menunggu tiap bulan satu per satu
+    // (132 giliran berurutan), sehingga backup terasa menggantung sangat lama.
+    await Promise.all(years.map(async year => {
       backup.years[year] = {};
-      for (const month of MONTHS) {
-        const colIn  = `users/${uid}/${year}_${month}_in`;
-        const colOut = `users/${uid}/${year}_${month}_out`;
+      await Promise.all(MONTHS.map(async month => {
         try {
           const [snapIn, snapOut] = await Promise.all([
-            getDocs(collection(db, colIn)),
-            getDocs(collection(db, colOut))
+            getDocs(collection(db, `users/${uid}/${year}_${month}_in`)),
+            getDocs(collection(db, `users/${uid}/${year}_${month}_out`))
           ]);
           const inData  = snapIn.docs.map(d=>({...d.data()}));
           const outData = snapOut.docs.map(d=>({...d.data()}));
@@ -2110,10 +2048,11 @@ window.exportAllData = async function() {
             backup.years[year][month] = { in: inData, out: outData };
           }
         } catch(e2) {
-          // skip months with no data
+          // lewati bulan yang gagal dibaca
         }
-      }
-    }
+      }));
+      if(Object.keys(backup.years[year]).length === 0) delete backup.years[year];
+    }));
 
     // Local data
     try { backup.recurring = JSON.parse(localStorage.getItem('recurring') || '[]'); } catch { backup.recurring = []; }
@@ -2292,6 +2231,8 @@ window.toggleInsights = function() {
   if (!section || !chevron) return;
   section.style.display = window.insightOpen ? 'block' : 'none';
   chevron.style.transform = window.insightOpen ? 'rotate(180deg)' : 'rotate(0deg)';
+  // Simpan supaya panel tetap terbuka setelah reload (dibaca lagi di buildUI)
+  try { localStorage.setItem('insightOpen', window.insightOpen ? '1' : '0'); } catch(e) {}
   if (window.insightOpen) window.renderInsights();
 };
 
