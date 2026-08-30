@@ -2885,6 +2885,17 @@ window.toggleInsights = function() {
   if (window.insightOpen) window.renderInsights();
 };
 
+// ── SERVICE WORKER ─────────────────────────────
+// Tanpa pendaftaran ini, Chrome hanya menawarkan pintasan bookmark yang membuka
+// tab browser — bukan "Install app" yang berjalan layar penuh. Hanya jalan di
+// HTTPS atau localhost; dari file:// memang tidak tersedia dan itu wajar.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js')
+      .catch(e => console.warn('Service worker gagal didaftarkan:', e));
+  });
+}
+
 // ── BOOT ───────────────────────────────────────
 const saved = getConfig();
 if(saved) { startApp(saved); }
