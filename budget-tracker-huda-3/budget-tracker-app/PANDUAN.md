@@ -228,12 +228,31 @@ Butuh URL HTTPS (hasil deploy), tidak bisa dari `localhost`.
 
 ## ☁️ Cara kerja penyimpanan
 
-- Setiap penambahan atau penghapusan langsung tersimpan ke Firestore
+- Setiap penambahan, perubahan, atau penghapusan langsung tersimpan ke Firestore
 - Indikator **"Tersimpan ☁️"** muncul saat sinkronisasi berhasil
 - Data tersimpan di jalur `users/{uid}/{tahun}_{bulan}_{in|out}` — terpisah per akun
-- Buka dari perangkat lain dengan akun yang sama, datanya identik
-- **Transaksi rutin** dan **limit budget** disimpan di `localStorage`, bukan cloud —
-  keduanya tidak ikut berpindah antar perangkat, tapi ikut terbawa lewat fitur Backup
+- **Transaksi rutin** dan **limit budget** di `users/{uid}/settings/app`
+- Buka dari perangkat lain dengan akun yang sama — semuanya identik
+
+### Bisa dipakai offline
+
+Aplikasi menyimpan cache di perangkat, jadi tetap bisa dibuka dan **tetap bisa
+mencatat transaksi** saat tanpa sinyal. Yang kamu tulis akan diantre dan terkirim
+sendiri begitu koneksi kembali — berguna karena pengeluaran justru sering dicatat
+di dalam toko.
+
+Yang tetap butuh koneksi: **login pertama kali** di sebuah perangkat, dan
+**scan struk pertama** (karena mengunduh pustaka OCR).
+
+### Mengubah transaksi
+
+Klik ikon **✎** di baris transaksi untuk mengedit tanggal, jumlah, keterangan,
+kategori, jenis, metode, atau catatan. Foto struk yang menempel tetap terjaga.
+
+### Lupa password
+
+Di layar masuk ada tautan **"Lupa password?"**. Isi email, klik tautan itu, lalu
+cek inbox (dan folder spam). Firebase mengirim link untuk membuat password baru.
 
 ---
 

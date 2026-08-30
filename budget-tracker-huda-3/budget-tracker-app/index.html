@@ -153,6 +153,10 @@
   .auth-submit:hover{filter:brightness(1.1);transform:translateY(-1px);}
   .auth-submit:disabled{opacity:0.5;cursor:not-allowed;transform:none;}
   .auth-err{font-size:12px;color:var(--red);margin-top:8px;display:none;text-align:center;}
+  .auth-ok{font-size:12px;color:var(--green);margin-top:8px;display:none;text-align:center;line-height:1.5;}
+  .auth-link{font-family:var(--sans);font-size:12px;background:none;border:none;cursor:pointer;
+    color:var(--text-muted);text-decoration:underline;padding:4px;transition:color 0.2s;}
+  .auth-link:hover{color:var(--green);}
   .auth-divider{text-align:center;font-size:11px;color:var(--text-muted);margin:16px 0;position:relative;}
   .auth-divider::before,.auth-divider::after{content:'';position:absolute;top:50%;width:40%;height:1px;background:var(--border);}
   .auth-divider::before{left:0;} .auth-divider::after{right:0;}
@@ -444,6 +448,13 @@
   .badge-purple{background:var(--purple-dim);color:var(--purple);}
   .del-btn{background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:13px;padding:3px 6px;border-radius:6px;transition:all 0.15s;line-height:1;}
   .del-btn:hover{color:var(--red);background:var(--red-dim);}
+  .edit-btn{background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:13px;padding:3px 6px;border-radius:6px;transition:all 0.15s;line-height:1;}
+  .edit-btn:hover{color:var(--blue);background:var(--blue-dim);}
+  /* .entry-del dipakai di kartu tampilan mobile tapi tidak pernah punya aturan CSS. */
+  .entry-del,.entry-edit{background:none;border:none;cursor:pointer;font-size:14px;
+    padding:6px;border-radius:7px;transition:all 0.15s;line-height:1;flex-shrink:0;color:var(--text-muted);}
+  .entry-del:hover{color:var(--red);background:var(--red-dim);}
+  .entry-edit:hover{color:var(--blue);background:var(--blue-dim);}
   .empty-state{text-align:center;padding:36px 20px;color:var(--text-muted);}
   .empty-state .icon{font-size:28px;margin-bottom:8px;opacity:0.4;}
   .empty-state p{font-size:13px;}
@@ -612,6 +623,10 @@
     <div class="auth-field" id="authNameField" style="display:none"><label>Nama (opsional)</label><input type="text" id="authName" placeholder="cth: Huda"></div>
     <button class="auth-submit" id="authSubmit" onclick="submitAuth()">Masuk</button>
     <p class="auth-err" id="authErr"></p>
+    <p class="auth-ok" id="authOk"></p>
+    <p id="authForgotWrap" style="text-align:center;margin-top:12px">
+      <button class="auth-link" onclick="forgotPassword()">Lupa password?</button>
+    </p>
     <div class="auth-divider">atau</div>
     <p style="text-align:center;font-size:12px;color:var(--text-muted)">Data kamu aman & terenkripsi oleh Firebase 🔒</p>
   </div>
@@ -853,6 +868,25 @@
 
 
 <!-- BACKUP MODAL -->
+<div class="modal-overlay" id="editModal">
+  <div class="modal-box">
+    <button class="modal-close" onclick="closeEditModal()">✕</button>
+    <div class="modal-title">✏️ Edit Transaksi</div>
+    <div class="modal-sub" id="editModalSub">Ubah lalu simpan</div>
+    <div class="form-grid">
+      <div class="field"><label>Tanggal</label><input type="date" id="editDate"></div>
+      <div class="field"><label>Jumlah (Rp)</label><input type="number" id="editAmount" min="0"></div>
+      <div class="field span2"><label>Keterangan</label><input type="text" id="editDesc"></div>
+      <div class="field"><label>Kategori</label><select id="editCat"></select></div>
+      <div class="field"><label>Jenis</label><select id="editType"></select></div>
+      <div class="field" id="editMethodField"><label>Metode Bayar</label><select id="editMethod"></select></div>
+      <div class="field"><label>Catatan</label><input type="text" id="editNote"></div>
+    </div>
+    <p class="auth-err" id="editErr"></p>
+    <button class="modal-btn primary" id="editSaveBtn" onclick="saveEdit()" style="margin-top:16px">Simpan Perubahan</button>
+  </div>
+</div>
+
 <div class="modal-overlay" id="receiptModal">
   <div class="modal-box">
     <button class="modal-close" onclick="closeReceiptModal()">✕</button>
@@ -891,9 +925,10 @@
 <!-- Firebase SDK -->
 <script type="module">
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
-import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
+import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
 import {
-  getFirestore, collection, addDoc, deleteDoc, doc, getDoc, getDocs,
+  initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
+  collection, addDoc, deleteDoc, doc, getDoc, getDocs, setDoc, updateDoc,
   onSnapshot, query, orderBy, serverTimestamp
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 
@@ -953,7 +988,19 @@ function startApp(cfg) {
 
   try {
     const app = initializeApp(cfg);
-    db = getFirestore(app);
+    // Cache persisten membuat aplikasi tetap bisa dibuka dan dicatat saat offline —
+    // penting karena pengeluaran justru sering dicatat di dalam toko, tempat sinyal
+    // buruk. Tulisan saat offline diantre dan dikirim sendiri begitu ada koneksi.
+    // multipleTabManager mencegah bentrok bila dibuka di beberapa tab sekaligus.
+    try {
+      db = initializeFirestore(app, {
+        localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+      });
+    } catch(e) {
+      // Mode privat / browser tanpa IndexedDB: jalan tanpa cache, jangan gagal total.
+      console.warn('Cache offline tidak tersedia, lanjut tanpa itu:', e);
+      db = initializeFirestore(app, {});
+    }
     auth = getAuth(app);
     document.getElementById('loadingScreen').style.display = 'none';
 
@@ -1012,6 +1059,7 @@ function buildUI() {
   }
   subscribeMonth();
   purgeReceiptsOnce();
+  if(currentUser?.uid) initSettings(currentUser.uid);
 }
 
 // ── YEAR NAV ───────────────────────────────────
@@ -1197,6 +1245,93 @@ window.addEntry = async function(type) {
   }
 };
 
+// ── EDIT TRANSAKSI ─────────────────────────────
+// Sebelumnya entri hanya bisa ditambah dan dihapus, sehingga salah ketik nominal
+// berarti hapus lalu ketik ulang semuanya — dan itu juga menghanguskan foto struk
+// yang menempel padanya.
+let editing = null;   // { type, id, month, year, receiptId }
+
+// Opsi dropdown di modal disalin dari form utama agar keduanya tidak bisa
+// berbeda diam-diam bila daftar kategori/jenis/metode diubah suatu saat.
+function salinOpsi(dariId, keId) {
+  const dari = document.getElementById(dariId);
+  const ke   = document.getElementById(keId);
+  if (!dari || !ke) return;
+  ke.innerHTML = dari.innerHTML;
+}
+
+window.editEntry = function(type, id) {
+  const month = MONTHS[currentMonth];
+  const e = cache[currentYear]?.[month]?.[type]?.find(x => x.id === id);
+  if (!e) { showToast('Entri tidak ditemukan.', 'error'); return; }
+  if (String(id).startsWith('temp_')) {
+    showToast('Tunggu sebentar, entri ini masih tersimpan…', 'error');
+    return;
+  }
+
+  editing = { type, id, month, year: currentYear };
+
+  salinOpsi(type === 'in' ? 'inCat'  : 'outCat',  'editCat');
+  salinOpsi(type === 'in' ? 'inType' : 'outType', 'editType');
+  if (type === 'out') salinOpsi('outMethod', 'editMethod');
+  document.getElementById('editMethodField').style.display = type === 'out' ? '' : 'none';
+
+  document.getElementById('editDate').value   = e.date || '';
+  document.getElementById('editAmount').value = e.amount ?? '';
+  document.getElementById('editDesc').value   = e.desc || '';
+  document.getElementById('editCat').value    = e.cat || '';
+  document.getElementById('editType').value   = e.type || '';
+  if (type === 'out') document.getElementById('editMethod').value = e.method || '';
+  document.getElementById('editNote').value   = e.note || '';
+
+  document.getElementById('editModalSub').textContent =
+    `${type === 'in' ? 'Pemasukan' : 'Pengeluaran'} · ${month} ${currentYear}`;
+  document.getElementById('editErr').style.display = 'none';
+  document.getElementById('editModal').classList.add('show');
+};
+
+window.closeEditModal = function() {
+  document.getElementById('editModal').classList.remove('show');
+  editing = null;
+};
+
+window.saveEdit = async function() {
+  if (!editing) return;
+  const errEl = document.getElementById('editErr');
+  const btn   = document.getElementById('editSaveBtn');
+
+  const amount = parseFloat(document.getElementById('editAmount').value);
+  const desc   = document.getElementById('editDesc').value.trim();
+  if (!amount || amount <= 0) { errEl.textContent = 'Masukkan jumlah yang valid.'; errEl.style.display = 'block'; return; }
+  if (!desc)                  { errEl.textContent = 'Keterangan tidak boleh kosong.'; errEl.style.display = 'block'; return; }
+
+  const data = {
+    date:   document.getElementById('editDate').value,
+    desc, amount,
+    cat:    document.getElementById('editCat').value,
+    type:   document.getElementById('editType').value,
+    note:   document.getElementById('editNote').value,
+  };
+  if (editing.type === 'out') data.method = document.getElementById('editMethod').value;
+
+  btn.disabled = true;
+  btn.textContent = 'Menyimpan…';
+  try {
+    const uid = currentUser?.uid || 'guest';
+    // updateDoc, bukan setDoc: field lain seperti createdAt dan receiptId harus
+    // tetap utuh. Menulis ulang seluruh dokumen akan menghapus tautan ke foto struk.
+    await updateDoc(doc(db, `users/${uid}/${editing.year}_${editing.month}_${editing.type}`, editing.id), data);
+    closeEditModal();
+    showToast('✅ Perubahan tersimpan', 'success');
+  } catch (e) {
+    errEl.textContent = 'Gagal menyimpan: ' + e.message;
+    errEl.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Simpan Perubahan';
+  }
+};
+
 window.deleteEntry = async function(type, id) {
   const month = MONTHS[currentMonth];
   if(!confirm('Hapus entri ini?')) return;
@@ -1362,7 +1497,8 @@ function renderTable(type, entries, total, isFiltered=false) {
           </div>
         </div>
         <span class="entry-amount ${isIn?'in':'out'}">${fmt(e.amount)}</span>
-        <button class="entry-del" onclick="deleteEntry('${type}','${e.id}')" title="Hapus">✕</button>
+        <button class="entry-edit" onclick="editEntry('${type}','${esc(e.id)}')" title="Edit">✎</button>
+        <button class="entry-del" onclick="deleteEntry('${type}','${esc(e.id)}')" title="Hapus">✕</button>
       </div>`).join('');
 
     wrap.innerHTML = `
@@ -1380,7 +1516,10 @@ function renderTable(type, entries, total, isFiltered=false) {
         <td><span class="badge badge-blue">${esc(e.type)||'—'}</span></td>
         ${!isIn?`<td><span class="badge badge-purple">${esc(e.method)||'—'}</span></td>`:''}
         <td class="${isIn?'amount-in':'amount-out'}">${fmt(e.amount)}</td>
-        <td><button class="del-btn" onclick="deleteEntry('${type}','${e.id}')">✕</button></td>
+        <td style="white-space:nowrap">
+          <button class="edit-btn" title="Edit" onclick="editEntry('${type}','${esc(e.id)}')">✎</button>
+          <button class="del-btn" onclick="deleteEntry('${type}','${esc(e.id)}')">✕</button>
+        </td>
       </tr>`).join('');
     wrap.innerHTML=`<table class="tbl"><thead><tr>
       <th>Tanggal</th><th>Keterangan</th><th>Kategori</th><th>Jenis</th>
@@ -1571,12 +1710,79 @@ function highlight(text) {
 
 
 
+// ── PENGATURAN TERSINKRON ──────────────────────
+// Transaksi rutin dan limit budget dulu hanya ada di localStorage, sehingga tidak
+// ikut berpindah antar perangkat — padahal seluruh aplikasi ini menjanjikan cloud
+// sync. Sekarang keduanya disimpan di satu dokumen `users/{uid}/settings/app`.
+//
+// Getternya tetap sinkron (dipakai di banyak tempat termasuk saat render), jadi
+// polanya: satu salinan di memori yang dijaga tetap mutakhir oleh onSnapshot,
+// dengan penulisan langsung ke Firestore.
+
+let settingsCache = { recurring: [], budgetLimits: {} };
+let unsubSettings = null;
+
+function settingsRef(uid) { return doc(db, `users/${uid}/settings`, 'app'); }
+
+async function initSettings(uid) {
+  if (unsubSettings) unsubSettings();
+
+  // Migrasi sekali dari localStorage: kalau di cloud belum ada apa-apa tapi di
+  // perangkat ini sudah, naikkan dulu supaya data lama tidak hilang.
+  try {
+    const snap = await getDoc(settingsRef(uid));
+    if (!snap.exists()) {
+      const lokal = bacaSettingsLokal();
+      if (lokal.recurring.length || Object.keys(lokal.budgetLimits).length) {
+        await setDoc(settingsRef(uid), lokal);
+        console.info('Transaksi rutin & limit budget dipindahkan dari perangkat ini ke cloud.');
+      }
+    }
+  } catch (e) {
+    console.error('Migrasi pengaturan gagal:', e);
+  }
+
+  unsubSettings = onSnapshot(settingsRef(uid), snap => {
+    const d = snap.data() || {};
+    settingsCache = {
+      recurring:    Array.isArray(d.recurring) ? d.recurring : [],
+      budgetLimits: (d.budgetLimits && typeof d.budgetLimits === 'object') ? d.budgetLimits : {}
+    };
+    if (currentTab === 'recurring') renderRecurringList();
+    if (currentTab === 'out') renderBudgetGrid();
+  }, e => console.error('Gagal memantau pengaturan:', e));
+}
+
+// Dipakai hanya untuk migrasi; setelah itu localStorage tidak lagi jadi acuan.
+function bacaSettingsLokal() {
+  let recurring = [], budgetLimits = {};
+  try { recurring = JSON.parse(localStorage.getItem('recurring') || '[]'); } catch {}
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (!k || !k.startsWith('budgetLimits_')) continue;
+    try {
+      const v = JSON.parse(localStorage.getItem(k) || '{}');
+      if (Object.keys(v).length) budgetLimits[k.slice('budgetLimits_'.length)] = v;
+    } catch {}
+  }
+  return { recurring, budgetLimits };
+}
+
+function simpanSettings(patch) {
+  settingsCache = { ...settingsCache, ...patch };   // tampilan langsung ikut berubah
+  const uid = currentUser?.uid;
+  if (!uid || !db) return;
+  // Tidak di-await: saat offline, Firestore mengantre dan mengirim sendiri nanti.
+  setDoc(settingsRef(uid), settingsCache, { merge: true })
+    .catch(e => { console.error('Gagal menyimpan pengaturan:', e); showToast('Gagal menyimpan ke cloud.', 'error'); });
+}
+
 // ── RECURRING TRANSACTIONS ─────────────────────
 function getRecurring() {
-  try { return JSON.parse(localStorage.getItem('recurring') || '[]'); } catch { return []; }
+  return settingsCache.recurring;
 }
 function saveRecurring(list) {
-  localStorage.setItem('recurring', JSON.stringify(list));
+  simpanSettings({ recurring: list });
 }
 
 window.addRecurring = function() {
@@ -2038,15 +2244,19 @@ window.closeReceiptModal = function() {
 // ── BUDGET LIMITS ──────────────────────────────
 const OUT_CATS = ['Tempat Tinggal','Makanan','Transportasi','Kuliah','Komunikasi','Kesehatan','Hiburan','Tabungan','Lainnya'];
 
+// Limit disimpan per tahun di dalam settingsCache.budgetLimits, dikunci tahun
+// sebagai string karena kunci objek JSON selalu berupa string.
 function getBudgetLimits() {
-  try { return JSON.parse(localStorage.getItem('budgetLimits_'+currentYear) || '{}'); } catch { return {}; }
+  return settingsCache.budgetLimits[String(currentYear)] || {};
 }
 
 function saveBudgetLimit(cat, amount) {
-  const limits = getBudgetLimits();
+  const limits = { ...getBudgetLimits() };
   if(amount > 0) limits[cat] = amount;
   else delete limits[cat];
-  localStorage.setItem('budgetLimits_'+currentYear, JSON.stringify(limits));
+  simpanSettings({
+    budgetLimits: { ...settingsCache.budgetLimits, [String(currentYear)]: limits }
+  });
 }
 
 function renderBudgetGrid() {
@@ -2435,15 +2645,11 @@ window.exportAllData = async function() {
       if(Object.keys(backup.years[year]).length === 0) delete backup.years[year];
     }));
 
-    // Local data
-    try { backup.recurring = JSON.parse(localStorage.getItem('recurring') || '[]'); } catch { backup.recurring = []; }
-    backup.budgetLimits = {};
-    years.forEach(y => {
-      try {
-        const limits = JSON.parse(localStorage.getItem('budgetLimits_'+y) || '{}');
-        if(Object.keys(limits).length > 0) backup.budgetLimits[y] = limits;
-      } catch {}
-    });
+    // Transaksi rutin & limit budget kini tersimpan di cloud, bukan localStorage.
+    // Membacanya dari localStorage akan menghasilkan backup kosong di perangkat
+    // yang belum pernah dipakai membuat keduanya.
+    backup.recurring    = settingsCache.recurring;
+    backup.budgetLimits = settingsCache.budgetLimits;
 
     const blob = new Blob([JSON.stringify(backup, null, 2)], {type:'application/json'});
     const url = URL.createObjectURL(blob);
@@ -2462,6 +2668,14 @@ window.exportAllData = async function() {
   }
 };
 
+// Sidik jari sebuah entri, dipakai restore untuk mengenali data yang sudah ada.
+// createdAt sengaja tidak ikut: nilainya dibuat server saat penulisan, jadi entri
+// yang sama akan punya createdAt berbeda dan selalu terlihat sebagai data baru.
+function kunciEntri(d) {
+  return [d.date, (d.desc || '').trim().toLowerCase(), d.amount,
+          d.cat || '', d.type || '', d.method || ''].join('|');
+}
+
 window.handleRestoreFile = function(event) {
   const showT = (msg, type) => {
     const el = document.getElementById('toast');
@@ -2478,32 +2692,46 @@ window.handleRestoreFile = function(event) {
 
       showT('⏳ Memulihkan data...', 'success');
       const uid = currentUser?.uid || 'guest';
-      let count = 0;
+      let count = 0, lewat = 0;
 
       for (const year of Object.keys(backup.years)) {
         for (const month of Object.keys(backup.years[year])) {
           const monthData = backup.years[year][month];
           for (const type of ['in','out']) {
             const entries = monthData[type] || [];
+            if (!entries.length) continue;
+            const colPath = `users/${uid}/${year}_${month}_${type}`;
+
+            // Restore dulu bersifat menambah tanpa memeriksa, sehingga memulihkan
+            // file yang sama dua kali menggandakan seluruh data tanpa peringatan.
+            // Sekarang isi bulan itu dibaca dulu, lalu entri yang sudah persis
+            // sama dilewati. Kuncinya gabungan tanggal+keterangan+nominal+kategori
+            // — bukan id dokumen, karena id lama tidak ikut tersimpan di backup.
+            const adaSnap = await getDocs(collection(db, colPath));
+            const sudahAda = new Set(adaSnap.docs.map(d => kunciEntri(d.data())));
+
             for (const entry of entries) {
               const { id, ...data } = entry;
-              const colPath = `users/${uid}/${year}_${month}_${type}`;
+              if (sudahAda.has(kunciEntri(data))) { lewat++; continue; }
               await addDoc(collection(db, colPath), data);
+              sudahAda.add(kunciEntri(data));   // cegah duplikat di dalam file itu sendiri
               count++;
             }
           }
         }
       }
 
-      // Restore recurring & budget limits
-      if(backup.recurring) saveRecurring(backup.recurring);
-      if(backup.budgetLimits) {
-        Object.keys(backup.budgetLimits).forEach(year => {
-          localStorage.setItem('budgetLimits_'+year, JSON.stringify(backup.budgetLimits[year]));
-        });
+      // Restore recurring & budget limits — ikut naik ke cloud, bukan localStorage
+      const patch = {};
+      if(Array.isArray(backup.recurring)) patch.recurring = backup.recurring;
+      if(backup.budgetLimits && typeof backup.budgetLimits === 'object') {
+        patch.budgetLimits = { ...settingsCache.budgetLimits, ...backup.budgetLimits };
       }
+      if(Object.keys(patch).length) simpanSettings(patch);
 
-      showT(`✅ ${count} transaksi berhasil dipulihkan!`, 'success');
+      showT(lewat
+        ? `✅ ${count} transaksi dipulihkan, ${lewat} dilewati (sudah ada).`
+        : `✅ ${count} transaksi berhasil dipulihkan!`, 'success');
       closeBackupModal();
       subscribeMonth();
       if(currentTab==='recurring') renderRecurringList();
@@ -2517,8 +2745,43 @@ window.handleRestoreFile = function(event) {
 // ── AUTH FUNCTIONS ─────────────────────────────
 let authMode = 'login';
 
+window.forgotPassword = async function() {
+  const email = document.getElementById('authEmail').value.trim();
+  const errEl = document.getElementById('authErr');
+  const okEl  = document.getElementById('authOk');
+  okEl.style.display = 'none';
+
+  if(!email) {
+    errEl.textContent = 'Isi dulu emailmu di atas, lalu klik "Lupa password?" lagi.';
+    errEl.style.display = 'block';
+    return;
+  }
+
+  try {
+    await sendPasswordResetEmail(auth, email);
+    errEl.style.display = 'none';
+    okEl.textContent = `Link reset dikirim ke ${email}. Cek inbox — kalau tidak ada, lihat folder spam.`;
+    okEl.style.display = 'block';
+  } catch(e) {
+    // Firebase sengaja tidak membedakan email terdaftar atau tidak pada beberapa
+    // konfigurasi, agar orang tidak bisa menebak-nebak email mana yang punya akun.
+    const msgs = {
+      'auth/invalid-email':  'Format email tidak valid.',
+      'auth/user-not-found': 'Email itu belum terdaftar. Daftar dulu di tab "Daftar".',
+      'auth/too-many-requests': 'Terlalu sering mencoba. Tunggu beberapa menit.',
+    };
+    errEl.textContent = msgs[e.code] || ('Gagal mengirim link reset: ' + e.message);
+    errEl.style.display = 'block';
+  }
+};
+
 window.switchAuthTab = function(mode) {
   authMode = mode;
+  const okEl = document.getElementById('authOk');
+  if(okEl) okEl.style.display = 'none';
+  // "Lupa password" hanya relevan saat masuk, bukan saat mendaftar.
+  const forgot = document.getElementById('authForgotWrap');
+  if(forgot) forgot.style.display = mode === 'login' ? 'block' : 'none';
   document.querySelectorAll('.auth-tab').forEach((b,i) => {
     b.classList.toggle('active', (i===0&&mode==='login')||(i===1&&mode==='register'));
   });
@@ -2569,6 +2832,10 @@ window.logoutUser = async function() {
   // Clear cache
   MONTHS.forEach(m => { Object.keys(cache).forEach(y => { if(cache[y][m]) cache[y][m] = {in:[],out:[]}; }); });
   prevMonthLoaded.clear();   // jangan pakai data bulan pembanding milik akun sebelumnya
+  // Pengaturan juga milik akun: lepas listener dan kosongkan, agar akun berikutnya
+  // yang login di perangkat ini tidak melihat transaksi rutin milik akun sebelumnya.
+  if(unsubSettings) { unsubSettings(); unsubSettings = null; }
+  settingsCache = { recurring: [], budgetLimits: {} };
   if(unsubIn) unsubIn();
   if(unsubOut) unsubOut();
   document.getElementById('mainApp').style.display = 'none';
