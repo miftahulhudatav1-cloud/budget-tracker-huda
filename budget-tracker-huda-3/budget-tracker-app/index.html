@@ -648,6 +648,9 @@
     <p id="authForgotWrap" style="text-align:center;margin-top:12px">
       <button class="auth-link" onclick="forgotPassword()">Lupa password?</button>
     </p>
+    <p style="text-align:center;margin-top:10px">
+      <button class="auth-link" onclick="runDiagnostics()">🩺 Diagnosa koneksi</button>
+    </p>
     <div class="auth-divider">atau</div>
     <p style="text-align:center;font-size:12px;color:var(--text-muted)">Data kamu aman & terenkripsi oleh Firebase 🔒</p>
   </div>
@@ -966,7 +969,7 @@ import {
 
 // Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
 // perangkat masih menjalankan versi lama dari cache service worker.
-const APP_BUILD = '2026-08-31-c';
+const APP_BUILD = '2026-08-31-d';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
@@ -1329,7 +1332,14 @@ window.runDiagnostics = async function() {
 
   tulis('\n── SESI ──');
   const u = auth?.currentUser;
-  if (!u) { tulis('BELUM LOGIN — ini penyebabnya.'); return; }
+  if (!u) {
+    // Wajar bila dipanggil dari layar login: bagian config & build di atas tetap
+    // berguna untuk memastikan config yang terpasang memang yang dimaksud.
+    tulis('Belum login — pemeriksaan token & izin dilewati.');
+    tulis(auth ? 'Firebase Auth siap.' : '>>> MASALAH: Firebase Auth gagal dimuat.');
+    tulis('\nwaktu HP : ' + new Date().toString());
+    return;
+  }
   tulis('uid   : ' + u.uid);
   tulis('email : ' + u.email);
 
@@ -3111,23 +3121,43 @@ window.submitAuth = async function() {
   errEl.style.display = 'none';
 
   try {
-    if(authMode === 'login') {
-      await signInWithEmailAndPassword(auth, email, pass);
-    } else {
-      await createUserWithEmailAndPassword(auth, email, pass);
-    }
+    if(!auth) throw Object.assign(new Error('Firebase belum siap.'), { code: 'app/auth-null' });
+
+    // Tanpa batas waktu, permintaan yang menggantung membuat tombol terkunci
+    // selamanya — dan dari luar itu terlihat persis seperti tombol yang rusak.
+    const aksi = authMode === 'login'
+      ? signInWithEmailAndPassword(auth, email, pass)
+      : createUserWithEmailAndPassword(auth, email, pass);
+    await Promise.race([
+      aksi,
+      new Promise((_, tolak) => setTimeout(
+        () => tolak(Object.assign(new Error('Tidak ada jawaban dari server.'), { code: 'app/timeout' })),
+        20000))
+    ]);
     // onAuthStateChanged will handle the rest
   } catch(e) {
     const msgs = {
-      'auth/user-not-found': 'Email tidak ditemukan. Coba daftar dulu!',
-      'auth/wrong-password': 'Password salah. Coba lagi!',
+      'auth/user-not-found': 'Email tidak ditemukan di project ini. Akun Firebase terpisah per project — coba tab "Daftar".',
+      'auth/wrong-password': 'Password salah. Coba lagi, atau pakai "Lupa password?".',
       'auth/email-already-in-use': 'Email sudah terdaftar. Silakan masuk!',
       'auth/invalid-email': 'Format email tidak valid!',
       'auth/weak-password': 'Password terlalu lemah!',
-      'auth/invalid-credential': 'Email atau password salah!',
+      'auth/invalid-credential': 'Email atau password salah. Akun Firebase terpisah per project — kalau ini project baru, daftar dulu.',
+      'auth/network-request-failed': 'Gagal menghubungi server. Periksa koneksi lalu coba lagi.',
+      'auth/operation-not-allowed': 'Login Email/Password belum diaktifkan di Firebase Console project ini.',
+      'auth/unauthorized-domain': 'Domain ini belum terdaftar di Authentication → Settings → Authorized domains.',
+      'auth/too-many-requests': 'Terlalu banyak percobaan. Tunggu beberapa menit.',
+      'app/timeout': 'Server tidak menjawab dalam 20 detik. Periksa koneksi lalu coba lagi.',
+      'app/auth-null': 'Konfigurasi Firebase gagal dimuat. Pakai Ganti Firebase untuk memasang ulang.',
     };
-    errEl.textContent = msgs[e.code] || e.message;
+    // Kode mentahnya ikut ditampilkan: itu yang membedakan penyebab yang gejalanya
+    // sama persis, dan tanpa itu diagnosis jadi tebak-tebakan.
+    errEl.textContent = (msgs[e.code] || e.message) + '  [' + (e.code || 'tanpa kode') + ']';
     errEl.style.display = 'block';
+    console.error('Auth gagal:', e.code, e.message);
+  } finally {
+    // Selalu dikembalikan, apa pun yang terjadi — kalau tidak, satu kegagalan
+    // membuat tombol mati permanen sampai halaman dimuat ulang.
     btn.disabled = false;
     btn.textContent = authMode==='login' ? 'Masuk' : 'Daftar Sekarang';
   }
