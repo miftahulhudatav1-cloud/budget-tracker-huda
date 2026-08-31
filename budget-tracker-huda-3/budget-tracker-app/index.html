@@ -709,7 +709,7 @@
       <button class="modal-close" onclick="closeDiag()">✕</button>
       <div class="modal-title">🩺 Diagnosa Koneksi</div>
       <div class="modal-sub">Memeriksa config, sesi login, dan izin Firestore</div>
-      <pre id="diagOut" style="font-family:var(--mono);font-size:11px;line-height:1.7;white-space:pre-wrap;word-break:break-all;color:var(--text-dim);margin:0"></pre>
+      <pre id="diagOut" style="font-family:var(--mono);font-size:11px;line-height:1.7;white-space:pre-wrap;word-break:break-all;color:var(--text-dim);margin:0;user-select:text;-webkit-user-select:text"></pre>
       <button class="modal-btn secondary" onclick="salinDiag()" style="margin-top:14px">Salin hasil</button>
     </div>
   </div>
@@ -985,6 +985,21 @@ window.saveConfig = function() {
   if(!cfg.apiKey || !cfg.authDomain || !cfg.projectId || !cfg.appId) {
     document.getElementById('setupErr').style.display = 'block'; return;
   }
+
+  // authDomain selalu "{projectId}.firebaseapp.com". Kalau tidak cocok, hampir
+  // pasti nilainya diambil dari dua project berbeda — login akan tetap berhasil
+  // (memakai apiKey/authDomain) tapi seluruh akses database ditolak, karena token
+  // yang terbit bukan untuk project yang dituju Firestore. Gejalanya sangat
+  // membingungkan, jadi lebih baik dicegat di sini.
+  const domainProject = cfg.authDomain.split('.')[0];
+  if(domainProject && domainProject !== cfg.projectId) {
+    const lanjut = confirm(
+      `Peringatan: authDomain menunjuk project "${domainProject}" tapi Project ID diisi "${cfg.projectId}".\n\n` +
+      `Keduanya harus dari project yang sama, kalau tidak login berhasil tapi datamu tidak akan bisa dibaca.\n\n` +
+      `Lanjutkan saja? (pilih Batal untuk memperbaiki dulu)`
+    );
+    if(!lanjut) return;
+  }
   localStorage.setItem('fbConfig', JSON.stringify(cfg));
   startApp(cfg);
 };
@@ -1250,11 +1265,28 @@ window.closeDiag = function() {
 };
 
 window.salinDiag = async function() {
+  const teks = document.getElementById('diagOut').textContent;
+
+  // navigator.clipboard sering ditolak diam-diam di WebView/browser HP tertentu,
+  // jadi ada cadangan lewat textarea + execCommand yang masih didukung luas.
   try {
-    await navigator.clipboard.writeText(document.getElementById('diagOut').textContent);
+    await navigator.clipboard.writeText(teks);
     showToast('Hasil diagnosa disalin.', 'success');
+    return;
+  } catch {}
+
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = teks;
+    ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+    document.body.appendChild(ta);
+    ta.focus(); ta.select(); ta.setSelectionRange(0, teks.length);
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    showToast(ok ? 'Hasil diagnosa disalin.' : 'Tidak bisa menyalin — tahan teksnya lalu Copy, atau screenshot.',
+              ok ? 'success' : 'error');
   } catch {
-    showToast('Gagal menyalin — screenshot saja.', 'error');
+    showToast('Tidak bisa menyalin — tahan teksnya lalu Copy, atau screenshot.', 'error');
   }
 };
 
