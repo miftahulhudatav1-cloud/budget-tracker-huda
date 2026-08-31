@@ -121,11 +121,34 @@ not found"* padahal sudah di-install, itu alias kosong bawaan Microsoft Store �
 matikan lewat **Settings → Apps → Advanced app settings → App execution aliases**.
 
 Saat pertama dibuka, aplikasi meminta empat nilai konfigurasi dari step 1.2.
-Isi, klik **Simpan & Mulai**, lalu daftar akun dengan email dan password
-(**minimal 6 karakter** — syarat dari Firebase).
+Cara paling aman: **copy seluruh blok** `const firebaseConfig = { ... }` dari
+Firebase Console, tempel ke kotak **"Tempel Config Sekaligus"** paling atas, lalu
+tap **Isi otomatis**. Keempat kolom terisi sendiri.
+
+> Jangan mengetik manual kalau bisa dihindari. Autofill browser gemar
+> mengembalikan nilai lama, dan `apiKey` yang tertukar dari project lain
+> menghasilkan kegagalan yang membingungkan: login tetap berhasil, tapi semua
+> data ditolak. Lihat bagian Masalah yang sering terjadi.
+
+Lalu klik **Simpan & Mulai**, dan daftar akun dengan email dan password
+(**minimal 6 karakter** — syarat dari Firebase). Isi juga kolom **Nama**; itu
+yang dipakai sebagai judul aplikasi.
 
 Konfigurasi tersimpan di `localStorage` browser, jadi hanya diminta sekali per
-perangkat. Untuk menggantinya, pakai tombol **Ganti Firebase** di dalam aplikasi.
+perangkat. Untuk menggantinya: menu **⋯** → **Ganti Firebase**.
+
+### Memasang di perangkat kedua tanpa mengetik
+
+Aplikasi menerima konfigurasi lewat tautan, jadi HP tidak perlu mengetik apa pun:
+
+```
+https://<domain-kamu>/#cfg=<base64 dari JSON config>
+```
+
+Buka tautan itu di perangkat baru, konfirmasi, selesai. Konfigurasi Firebase
+memang bukan rahasia — ia selalu terlihat di halaman web mana pun yang
+memakainya, dan yang menjaga datamu adalah security rules serta password akun.
+Meski begitu, kirimkan hanya ke perangkatmu sendiri, jangan ke tempat publik.
 
 ---
 
@@ -244,12 +267,56 @@ di dalam toko.
 Yang tetap butuh koneksi: **login pertama kali** di sebuah perangkat, dan
 **scan struk pertama** (karena mengunduh pustaka OCR).
 
+### Menu ⋯
+
+Tombol yang jarang dipakai ada di menu **⋯** di kanan atas, supaya tidak memenuhi
+layar HP: **Export Excel**, **Export PDF**, **Backup & Restore**,
+**Diagnosa Koneksi**, **Ganti Firebase**, dan **Keluar**.
+
+Yang tetap di luar menu adalah yang sering dilihat: pilihan tahun, status
+sinkronisasi, identitas akun, dan tombol tema terang/gelap.
+
+### Mengganti nama di judul
+
+Ketuk judul **"Keuangan …"** untuk menggantinya. Nama ini juga terpakai sebagai
+judul tab browser.
+
+Nama aplikasi di homescreen (label di bawah ikon) **tidak** ikut berubah — itu
+dibaca dari `manifest.json` saat aplikasi dipasang dan dikunci sejak saat itu.
+
+### Mencari transaksi
+
+Ketik di kolom pencarian: hasilnya mencakup **seluruh bulan di tahun berjalan**,
+bukan hanya bulan yang sedang dibuka. Hasil dari bulan lain diberi penanda bulan.
+
+Filter yang lebih rinci (kategori, jenis, metode, rentang tanggal) ada di balik
+tombol **⚙ Filter** pada tiap tabel. Tombolnya menyala dan menampilkan jumlah
+filter yang sedang aktif, supaya daftar yang tersaring tidak disangka data hilang.
+
+### Export ke Excel
+
+Menu **⋯** → **Export Excel** mengunduh **seluruh tahun** yang sedang dipilih
+sebagai file CSV yang terbuka rapi di Excel. Nominalnya ditulis sebagai angka
+polos, jadi langsung bisa dijumlah atau dibuat pivot.
+
+### Batas budget per kategori
+
+Ada di tab **Pengeluaran**, terlipat secara bawaan karena sembilan kategori
+memenuhi layar padahal jarang diubah. Bar-nya menampilkan ringkasan (berapa limit
+diset, berapa yang hampir/sudah habis), dan **peringatan budget tetap tampil di
+luar lipatan** — budget yang jebol memang perlu terlihat.
+
 ### Mengubah transaksi
 
 Klik ikon **✎** di baris transaksi untuk mengedit tanggal, jumlah, keterangan,
 kategori, jenis, metode, atau catatan. Foto struk yang menempel tetap terjaga.
 
-### Lupa password
+### Lupa password / salah ketik password
+
+Di layar masuk ada ikon **👁** di kolom password untuk melihat apa yang diketik —
+berguna karena password salah dan akun belum terdaftar memberi pesan yang mirip.
+
+Kalau memang lupa, tap **"Lupa password?"**.
 
 Di layar masuk ada tautan **"Lupa password?"**. Isi email, klik tautan itu, lalu
 cek inbox (dan folder spam). Firebase mengirim link untuk membuat password baru.
@@ -257,6 +324,26 @@ cek inbox (dan folder spam). Firebase mengirim link untuk membuat password baru.
 ---
 
 ## 🛟 Masalah yang sering terjadi
+
+> **Mulai dari sini:** menu **⋯** → **🩺 Diagnosa Koneksi**. Alat itu memeriksa
+> konfigurasi, sesi login, token, dan izin Firestore satu per satu, lalu
+> menyebutkan mana yang bermasalah. Jauh lebih cepat daripada menebak — pesan
+> error Firestore sendiri tidak membedakan penyebab yang solusinya berlainan.
+
+**Sudah login, tapi semua data ditolak** — muncul *"Akses Firestore ditolak"* dan
+angkanya nol, padahal namamu terlihat di pojok atas.
+
+Hampir selalu **konfigurasi tercampur dari dua Firebase project**. Login hanya
+memakai `apiKey` dan `authDomain`, jadi bisa berhasil memakai project A, sementara
+database memakai `projectId` project B dan menolak tokennya. Rules-nya tidak salah.
+
+Buka **Diagnosa** dan bandingkan baris `aud (project token)` dengan `projectId`.
+Kalau berbeda, itu penyebabnya: ambil **keempat** nilai dari project yang sama
+(menu ⋯ → Ganti Firebase), lalu **Keluar dan login lagi** — token hanya terbit
+ulang saat login.
+
+Kenali polanya: `authDomain` selalu berbentuk `{projectId}.firebaseapp.com`. Kalau
+bagian depannya berbeda dari `projectId`, konfigurasinya pasti tercampur.
 
 **Firebase Console gagal menyimpan apa pun** — muncul *"An unknown error occurred"*,
 *"Database already exists"*, atau *"Error updating Email/Password"*, sementara
