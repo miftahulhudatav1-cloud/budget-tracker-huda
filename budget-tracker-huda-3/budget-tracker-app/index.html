@@ -657,6 +657,7 @@
       <button class="logout-btn" onclick="openBackupModal()" style="border-color:rgba(255,179,71,0.3);color:var(--gold)">💾 Backup</button>
       <button class="logout-btn" onclick="logoutUser()">Keluar</button>
       <button class="logout-btn" onclick="resetConfig()" style="border-color:rgba(79,195,247,0.3);color:var(--blue)">Ganti Firebase</button>
+      <button class="logout-btn" onclick="runDiagnostics()" style="border-color:rgba(179,157,219,0.35);color:var(--purple)">🩺 Diagnosa</button>
     </div>
   </div>
 
@@ -701,6 +702,16 @@
     <button class="tab-btn" onclick="setTab('out')">📤 Pengeluaran</button>
     <button class="tab-btn" onclick="setTab('annual')">📊 Tahunan</button>
     <button class="tab-btn" onclick="setTab('recurring')">🔄 Rutin</button>
+  </div>
+
+  <div class="modal-overlay" id="diagModal">
+    <div class="modal-box">
+      <button class="modal-close" onclick="closeDiag()">✕</button>
+      <div class="modal-title">🩺 Diagnosa Koneksi</div>
+      <div class="modal-sub">Memeriksa config, sesi login, dan izin Firestore</div>
+      <pre id="diagOut" style="font-family:var(--mono);font-size:11px;line-height:1.7;white-space:pre-wrap;word-break:break-all;color:var(--text-dim);margin:0"></pre>
+      <button class="modal-btn secondary" onclick="salinDiag()" style="margin-top:14px">Salin hasil</button>
+    </div>
   </div>
 
   <!-- SEARCH BAR (shared) -->
@@ -1155,6 +1166,97 @@ function jelaskanError(err) {
   }
   return 'Error: ' + (err?.message || err);
 }
+
+// ── DIAGNOSA ───────────────────────────────────
+// "Missing or insufficient permissions" bisa berasal dari beberapa sebab yang
+// sangat berbeda, dan pesannya tidak membedakan satu pun. Alat ini memeriksa tiap
+// lapisan secara terpisah supaya penyebabnya terlihat, bukan ditebak.
+//
+// Yang paling menentukan adalah klaim `aud` di dalam ID token: itu menyebut project
+// mana token ini berlaku. Bila `aud` tidak sama dengan projectId yang dipakai
+// Firestore, berarti login dan database menunjuk project berbeda — dan setiap baca
+// pasti ditolak meski rules-nya sudah benar.
+function decodeJwtPayload(token) {
+  try {
+    const bagian = token.split('.')[1];
+    const json = atob(bagian.replace(/-/g, '+').replace(/_/g, '/'));
+    return JSON.parse(decodeURIComponent(escape(json)));
+  } catch { return null; }
+}
+
+window.runDiagnostics = async function() {
+  const out = document.getElementById('diagOut');
+  document.getElementById('diagModal').classList.add('show');
+  const baris = [];
+  const tulis = s => { baris.push(s); out.textContent = baris.join('\n'); };
+
+  tulis('Memeriksa…\n');
+  baris.length = 0;
+
+  const cfg = getConfig() || {};
+  tulis('── CONFIG ──');
+  tulis('projectId  : ' + (cfg.projectId || '(kosong)'));
+  tulis('authDomain : ' + (cfg.authDomain || '(kosong)'));
+  tulis('apiKey     : ' + (cfg.apiKey ? cfg.apiKey.slice(0, 12) + '…' : '(kosong)'));
+
+  tulis('\n── SESI ──');
+  const u = auth?.currentUser;
+  if (!u) { tulis('BELUM LOGIN — ini penyebabnya.'); return; }
+  tulis('uid   : ' + u.uid);
+  tulis('email : ' + u.email);
+
+  tulis('\n── TOKEN ──');
+  try {
+    const token = await u.getIdToken(true);   // paksa refresh agar bukan token basi
+    const p = decodeJwtPayload(token);
+    if (!p) { tulis('Token tidak bisa dibaca.'); }
+    else {
+      tulis('aud (project token) : ' + p.aud);
+      tulis('user_id             : ' + p.user_id || p.sub);
+      const sisa = Math.round((p.exp * 1000 - Date.now()) / 60000);
+      tulis('kedaluwarsa dalam   : ' + sisa + ' menit');
+      if (p.aud !== cfg.projectId) {
+        tulis('\n>>> MASALAH: token berlaku untuk project "' + p.aud +
+              '" tapi Firestore memakai "' + cfg.projectId + '".');
+      }
+      if (p.user_id && p.user_id !== u.uid) {
+        tulis('\n>>> MASALAH: user_id token beda dengan uid sesi.');
+      }
+      if (sisa < 0) tulis('\n>>> MASALAH: token sudah kedaluwarsa — cek jam & tanggal HP.');
+    }
+  } catch (e) {
+    tulis('Gagal mengambil token: ' + (e.code || '') + ' ' + e.message);
+  }
+
+  // Dua bentuk akses diuji terpisah: baca satu dokumen, dan query koleksi.
+  // Bila hanya query yang gagal, penyebabnya bukan izin melainkan index.
+  tulis('\n── UJI AKSES ──');
+  const month = MONTHS[currentMonth];
+  const uji = [
+    ['baca dokumen settings', () => getDoc(doc(db, `users/${u.uid}/settings`, 'app'))],
+    ['baca koleksi bulan ini', () => getDocs(collection(db, `users/${u.uid}/${currentYear}_${month}_in`))],
+    ['query + orderBy(date)',  () => getDocs(query(collection(db, `users/${u.uid}/${currentYear}_${month}_in`), orderBy('date','desc')))],
+  ];
+  for (const [nama, fn] of uji) {
+    try { await fn(); tulis(nama.padEnd(24) + ': OK'); }
+    catch (e) { tulis(nama.padEnd(24) + ': GAGAL — ' + (e.code || e.message)); }
+  }
+
+  tulis('\nwaktu HP : ' + new Date().toString());
+};
+
+window.closeDiag = function() {
+  document.getElementById('diagModal').classList.remove('show');
+};
+
+window.salinDiag = async function() {
+  try {
+    await navigator.clipboard.writeText(document.getElementById('diagOut').textContent);
+    showToast('Hasil diagnosa disalin.', 'success');
+  } catch {
+    showToast('Gagal menyalin — screenshot saja.', 'error');
+  }
+};
 
 // ── FIRESTORE REALTIME ─────────────────────────
 function subscribeMonth() {
