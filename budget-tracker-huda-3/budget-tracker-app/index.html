@@ -506,6 +506,20 @@
   /* Penanda bulan pada hasil pencarian lintas bulan. */
   .badge-month{background:var(--purple-dim);color:var(--purple);margin-left:6px;}
 
+  /* Pengingat harian */
+  .reminder{
+    display:flex;align-items:center;gap:12px;margin-bottom:16px;
+    padding:12px 16px;border-radius:12px;
+    background:var(--gold-dim);border:1px solid rgba(255,179,71,0.35);
+    animation:fade-up 0.4s ease both;
+  }
+  .reminder-text{flex:1;font-size:12.5px;font-weight:600;color:var(--gold);line-height:1.5;}
+  .reminder-close{
+    background:none;border:none;cursor:pointer;color:var(--gold);opacity:0.7;
+    font-size:13px;padding:4px 6px;border-radius:6px;flex-shrink:0;transition:opacity 0.2s;
+  }
+  .reminder-close:hover{opacity:1;}
+
   /* Menu ⋯ untuk aksi yang jarang dipakai */
   .menu-wrap{position:relative;display:inline-block;}
   .menu-panel{
@@ -766,6 +780,14 @@
         </div>
       </div>
     </div>
+  </div>
+
+  <!-- Pengingat harian. Muncul saat aplikasi dibuka dan belum ada catatan hari
+       ini. Ini BUKAN push notification: tanpa server, browser tidak bisa
+       menjadwalkan notifikasi untuk HP yang aplikasinya tertutup. -->
+  <div class="reminder" id="reminderBar" style="display:none">
+    <span class="reminder-text" id="reminderText"></span>
+    <button class="reminder-close" onclick="tutupPengingat()" title="Tutup">✕</button>
   </div>
 
   <div class="month-nav" id="monthNav"></div>
@@ -1062,7 +1084,7 @@ import {
 
 // Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
 // perangkat masih menjalankan versi lama dari cache service worker.
-const APP_BUILD = '2026-08-31-v';
+const APP_BUILD = '2026-08-31-w';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
@@ -1956,6 +1978,9 @@ function render() {
   window.renderInsights();
   if(currentTab==='out') renderBudgetGrid();
   if(currentTab==='annual') renderAnnual();
+  // Dievaluasi ulang tiap render, jadi pengingatnya lenyap begitu catatan
+  // pertama hari itu masuk — bukan menunggu aplikasi dibuka lagi.
+  tampilkanPengingat();
 }
 
 
@@ -2468,6 +2493,56 @@ window.deleteRecurring = function(id) {
   renderRecurringList();
   showToast('Dihapus','error');
 };
+
+// ── PENGINGAT HARIAN ───────────────────────────
+// Muncul saat aplikasi dibuka dan hari ini belum ada catatan sama sekali.
+//
+// Ini bukan push notification, dan tidak bisa jadi push notification tanpa
+// server: browser tidak menyediakan cara menjadwalkan notifikasi untuk waktu
+// mendatang ketika aplikasinya tertutup. API-nya (Notification Triggers) pernah
+// diuji coba Chrome lalu dibatalkan dan tidak pernah dirilis.
+function tanggalHariIni(d = new Date()) {
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+// Hanya menghitung dari bulan berjalan — hari ini selalu ada di dalamnya, dan
+// bulan lain tidak perlu dimuat hanya untuk pertanyaan sesederhana ini.
+function adaCatatanHariIni(d = new Date()) {
+  const bulan = MONTHS[d.getMonth()];
+  const isi = cache[d.getFullYear()]?.[bulan];
+  if (!isi) return false;
+  const hari = tanggalHariIni(d);
+  return [...(isi.in || []), ...(isi.out || [])].some(e => e.date === hari);
+}
+
+window.tutupPengingat = function() {
+  const el = document.getElementById('reminderBar');
+  if (el) el.style.display = 'none';
+  try { localStorage.setItem('pengingatDitutup', tanggalHariIni()); } catch(e) {}
+};
+
+function tampilkanPengingat() {
+  const bar = document.getElementById('reminderBar');
+  const teks = document.getElementById('reminderText');
+  if (!bar || !teks || !currentUser) return;
+
+  const sekarang = new Date();
+  // Ditutup manual hari ini? Jangan muncul lagi sampai besok.
+  let ditutup = null;
+  try { ditutup = localStorage.getItem('pengingatDitutup'); } catch(e) {}
+  if (ditutup === tanggalHariIni(sekarang)) { bar.style.display = 'none'; return; }
+
+  // Hanya relevan bila yang sedang dilihat memang bulan berjalan; di bulan lain
+  // "hari ini" tidak punya arti dan pengingatnya justru membingungkan.
+  if (currentYear !== sekarang.getFullYear() || currentMonth !== sekarang.getMonth()) {
+    bar.style.display = 'none'; return;
+  }
+
+  if (adaCatatanHariIni(sekarang)) { bar.style.display = 'none'; return; }
+
+  teks.textContent = 'Kamu belum mencatat budget kamu hari ini.';
+  bar.style.display = 'flex';
+}
 
 // ── OTOMATIS SAAT JATUH TEMPO ──────────────────
 // Aplikasi ini berjalan sepenuhnya di perangkat, tanpa server maupun penjadwal.
