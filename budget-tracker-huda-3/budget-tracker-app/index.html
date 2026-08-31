@@ -1012,12 +1012,12 @@ import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, si
 import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
   collection, addDoc, deleteDoc, doc, getDoc, getDocs, setDoc, updateDoc,
-  onSnapshot, query, orderBy, serverTimestamp
+  onSnapshot, query, where, orderBy, writeBatch, serverTimestamp
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 
 // Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
 // perangkat masih menjalankan versi lama dari cache service worker.
-const APP_BUILD = '2026-08-31-L';
+const APP_BUILD = '2026-08-31-m';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
@@ -1219,7 +1219,11 @@ function buildUI() {
   }
   subscribeMonth();
   purgeReceiptsOnce();
-  if(currentUser?.uid) initSettings(currentUser.uid);
+  if(currentUser?.uid) {
+    // Migrasi berjalan di latar. Selama belum tuntas & terverifikasi, seluruh
+    // baca/tulis tetap di koleksi lama, jadi tampilan tidak pernah kosong.
+    initSettings(currentUser.uid).then(() => migrasiKeTransactions(currentUser.uid));
+  }
 }
 
 // ── YEAR NAV ───────────────────────────────────
@@ -1261,13 +1265,36 @@ async function loadYearIntoCache(year) {
   initCache(year);
   const uid = currentUser?.uid;
   if(!uid || !db) return;
+
+  // Setelah migrasi: satu query untuk seluruh tahun, menggantikan 22 query.
+  if (sudahMigrasi()) {
+    try {
+      const snap = await getDocs(query(txCol(uid), where('year', '==', Number(year))));
+      const ember = {};
+      MONTHS.forEach(m => { ember[m] = { in: [], out: [] }; });
+      snap.docs.forEach(d => {
+        const t = d.data();
+        const b = ember[t.month];
+        if (b && (t.flow === 'in' || t.flow === 'out')) b[t.flow].push({ id: d.id, ...t });
+      });
+      MONTHS.forEach(m => {
+        ember[m].in.sort(urutTanggalDesc);
+        ember[m].out.sort(urutTanggalDesc);
+        cache[year][m] = ember[m];
+      });
+    } catch(e) {
+      console.error(`Gagal memuat tahun ${year}:`, e);
+    }
+    return;
+  }
+
   const liveMonth = (year === currentYear) ? MONTHS[currentMonth] : null;
   await Promise.all(MONTHS.map(async m => {
     if(m === liveMonth) return;   // bulan aktif sudah dijaga listener realtime
     try {
       const [snapIn, snapOut] = await Promise.all([
-        getDocs(collection(db, `users/${uid}/${year}_${m}_in`)),
-        getDocs(collection(db, `users/${uid}/${year}_${m}_out`))
+        getDocs(oldCol(uid, year, m, 'in')),
+        getDocs(oldCol(uid, year, m, 'out'))
       ]);
       cache[year][m].in  = snapIn.docs.map(d => ({id: d.id, ...d.data()}));
       cache[year][m].out = snapOut.docs.map(d => ({id: d.id, ...d.data()}));
@@ -1462,6 +1489,110 @@ window.salinDiag = async function() {
   }
 };
 
+// ── MODEL DATA ─────────────────────────────────
+// Dulu tiap bulan dan tiap arus punya koleksi sendiri
+// (users/{uid}/2026_Agustus_in), sehingga rekap tahunan butuh 22 query dan
+// pencarian tidak bisa melintasi bulan. Tujuannya: satu koleksi `transactions`.
+//
+// Percobaan pertama gagal dan membuat data seolah lenyap, karena aplikasi
+// langsung dialihkan membaca koleksi baru sementara migrasinya masih berjalan —
+// jadi yang tampil adalah koleksi yang memang belum terisi.
+//
+// Sekarang aturannya tegas: SELAMA settingsCache.migratedV2 belum true, seluruh
+// baca DAN tulis tetap memakai koleksi lama. Bendera itu hanya dinaikkan setelah
+// migrasi selesai dan jumlahnya diverifikasi. Jadi tidak ada satu momen pun di
+// mana pengguna melihat data kosong; kalau migrasi gagal, aplikasi berjalan
+// seperti biasa dan mencoba lagi nanti.
+function txCol(uid) { return collection(db, `users/${uid}/transactions`); }
+function periodeKey(year, month, flow) { return `${year}-${month}-${flow}`; }
+function oldCol(uid, year, month, flow) { return collection(db, `users/${uid}/${year}_${month}_${flow}`); }
+function sudahMigrasi() { return settingsCache.migratedV2 === true; }
+
+function urutTanggalDesc(a, b) { return String(b.date || '').localeCompare(String(a.date || '')); }
+
+function bungkusTx(data, year, month, flow) {
+  return {
+    ...data,
+    year: Number(year),   // WAJIB number: where('year','==',2026) tidak cocok dengan "2026"
+    month,
+    flow,
+    periode: periodeKey(year, month, flow),
+  };
+}
+
+// Menyisir seluruh koleksi lama secara paralel berbatas. Versi pertama menunggu
+// 264 query satu per satu, yang di HP bisa lebih dari semenit.
+async function sapuKoleksiLama(uid) {
+  const tugas = [];
+  for (const year of yearRange())
+    for (const month of MONTHS)
+      for (const flow of ['in', 'out'])
+        tugas.push({ year, month, flow });
+
+  const ditemukan = [];
+  const BATAS = 12;   // jaga agar tidak membanjiri koneksi HP
+  for (let i = 0; i < tugas.length; i += BATAS) {
+    const hasil = await Promise.all(tugas.slice(i, i + BATAS).map(async t => {
+      try {
+        const s = await getDocs(oldCol(uid, t.year, t.month, t.flow));
+        return s.docs.map(d => ({ id: d.id, data: bungkusTx(d.data(), t.year, t.month, t.flow) }));
+      } catch { return []; }   // koleksi tidak ada = wajar
+    }));
+    hasil.forEach(a => ditemukan.push(...a));
+  }
+  return ditemukan;
+}
+
+async function tulisBerkelompok(uid, daftar) {
+  for (let i = 0; i < daftar.length; i += 400) {   // batas Firestore 500 operasi/batch
+    const b = writeBatch(db);
+    daftar.slice(i, i + 400).forEach(x => b.set(doc(txCol(uid), x.id), x.data));
+    await b.commit();
+  }
+}
+
+let migrasiBerjalan = false;
+
+async function migrasiKeTransactions(uid) {
+  if (sudahMigrasi() || migrasiBerjalan || !db) return;
+  migrasiBerjalan = true;
+  try {
+    const ditemukan = await sapuKoleksiLama(uid);
+
+    if (!ditemukan.length) {
+      // Akun baru: tidak ada apa pun untuk dipindahkan.
+      simpanSettings({ migratedV2: true });
+      return;
+    }
+
+    // Id dokumen lama dipakai ulang, jadi menjalankan ulang migrasi menimpa
+    // dokumen yang sama alih-alih menggandakannya.
+    await tulisBerkelompok(uid, ditemukan);
+
+    // Sapuan kedua menangkap entri yang sempat ditulis ke koleksi lama saat
+    // sapuan pertama berlangsung — tanpa ini ada celah kecil untuk kehilangan.
+    const susulan = (await sapuKoleksiLama(uid)).filter(
+      x => !ditemukan.some(y => y.id === x.id));
+    if (susulan.length) await tulisBerkelompok(uid, susulan);
+
+    const total = ditemukan.length + susulan.length;
+    const cek = await getDocs(txCol(uid));
+    if (cek.size < total) {
+      // Bendera TIDAK dinaikkan: aplikasi tetap memakai koleksi lama dan mencoba
+      // lagi pada muat berikutnya. Lebih baik lambat daripada kehilangan data.
+      console.error(`Migrasi belum lengkap (${cek.size}/${total}) — tetap memakai data lama.`);
+      return;
+    }
+
+    simpanSettings({ migratedV2: true });
+    console.info(`Migrasi selesai: ${total} transaksi.`);
+  } catch (e) {
+    console.error('Migrasi gagal — aplikasi tetap memakai data lama:', e);
+  } finally {
+    migrasiBerjalan = false;
+  }
+}
+
 // ── FIRESTORE REALTIME ─────────────────────────
 function subscribeMonth() {
   const month = MONTHS[currentMonth];
@@ -1478,10 +1609,16 @@ function subscribeMonth() {
   }
 
   setSyncStatus('syncing');
-  const colIn  = `users/${uid}/${currentYear}_${month}_in`;
-  const colOut = `users/${uid}/${currentYear}_${month}_out`;
-  const qIn  = query(collection(db, colIn),  orderBy('date','desc'));
-  const qOut = query(collection(db, colOut), orderBy('date','desc'));
+  // Model baru memakai satu filter kesamaan tanpa orderBy, supaya cukup dengan
+  // index bawaan Firestore — composite index harus dibuat manual di Console dan
+  // itu beban yang tidak masuk akal untuk pembeli. Urutan diterapkan di klien.
+  const baru = sudahMigrasi();
+  const qIn  = baru
+    ? query(txCol(uid), where('periode', '==', periodeKey(currentYear, month, 'in')))
+    : query(oldCol(uid, currentYear, month, 'in'), orderBy('date','desc'));
+  const qOut = baru
+    ? query(txCol(uid), where('periode', '==', periodeKey(currentYear, month, 'out')))
+    : query(oldCol(uid, currentYear, month, 'out'), orderBy('date','desc'));
 
   const onErr = err => {
     console.error('Listener bulan gagal:', err.code, err.message);
@@ -1498,12 +1635,14 @@ function subscribeMonth() {
   };
 
   unsubIn = onSnapshot(qIn, snap => {
-    initCache(currentYear); cache[currentYear][month].in = snap.docs.map(d => ({id: d.id, ...d.data()}));
+    initCache(currentYear);
+    cache[currentYear][month].in = snap.docs.map(d => ({id: d.id, ...d.data()})).sort(urutTanggalDesc);
     render(); setSyncStatus('synced');
   }, onErr);
 
   unsubOut = onSnapshot(qOut, snap => {
-    initCache(currentYear); cache[currentYear][month].out = snap.docs.map(d => ({id: d.id, ...d.data()}));
+    initCache(currentYear);
+    cache[currentYear][month].out = snap.docs.map(d => ({id: d.id, ...d.data()})).sort(urutTanggalDesc);
     render(); setSyncStatus('synced');
   }, onErr);
 
@@ -1532,8 +1671,10 @@ async function ensurePrevMonthLoaded() {
   prevMonthLoaded.add(key);
   initCache(prevY);
   try {
-    const snap = await getDocs(collection(db, `users/${uid}/${prevY}_${prevM}_out`));
-    cache[prevY][prevM].out = snap.docs.map(d => ({id: d.id, ...d.data()}));
+    const snap = sudahMigrasi()
+      ? await getDocs(query(txCol(uid), where('periode', '==', periodeKey(prevY, prevM, 'out'))))
+      : await getDocs(oldCol(uid, prevY, prevM, 'out'));
+    cache[prevY][prevM].out = snap.docs.map(d => ({id: d.id, ...d.data()})).sort(urutTanggalDesc);
     window.renderInsights();
   } catch(e) {
     prevMonthLoaded.delete(key);
@@ -1585,15 +1726,16 @@ window.addEntry = async function(type) {
   try {
     const uid2 = uidAtau('Sesi belum siap — muat ulang halaman lalu coba lagi.');
     if(!uid2) throw new Error('Sesi tidak aktif.');
-    const colPath = `users/${uid2}/${currentYear}_${month}_${type}`;
+    const tujuan = sudahMigrasi() ? txCol(uid2) : oldCol(uid2, currentYear, month, type);
     if(receiptToSave) {
       pendingReceipt = receiptToSave;
       const receiptId = await savePendingReceipt(uid2);
       pendingReceipt = null;
       if(receiptId) data.receiptId = receiptId;
     }
-    await addDoc(collection(db, colPath), {
-      ...data, createdAt: serverTimestamp()
+    await addDoc(tujuan, {
+      ...(sudahMigrasi() ? bungkusTx(data, currentYear, month, type) : data),
+      createdAt: serverTimestamp()
     });
     // Firebase onSnapshot will replace tempId with real id automatically
   } catch(e) {
@@ -1681,7 +1823,12 @@ window.saveEdit = async function() {
     if(!uid) throw new Error('Sesi tidak aktif.');
     // updateDoc, bukan setDoc: field lain seperti createdAt dan receiptId harus
     // tetap utuh. Menulis ulang seluruh dokumen akan menghapus tautan ke foto struk.
-    await updateDoc(doc(db, `users/${uid}/${editing.year}_${editing.month}_${editing.type}`, editing.id), data);
+    // Field periode/year/month/flow tidak diubah: entri tetap di bulannya. Bila
+    // kelak tanggal boleh memindah entri antar bulan, keempatnya harus ikut
+    // diperbarui — kalau tidak, entrinya hilang dari tampilan.
+    await updateDoc(sudahMigrasi()
+      ? doc(txCol(uid), editing.id)
+      : doc(oldCol(uid, editing.year, editing.month, editing.type), editing.id), data);
     closeEditModal();
     showToast('✅ Perubahan tersimpan', 'success');
   } catch (e) {
@@ -1702,7 +1849,9 @@ window.deleteEntry = async function(type, id) {
     // Ambil receiptId sebelum entrinya hilang, agar fotonya tidak tertinggal
     // sebagai dokumen yatim sampai masa 7 hari habis.
     const entri = cache[currentYear]?.[month]?.[type]?.find(x => x.id === id);
-    await deleteDoc(doc(db, `users/${uid3}/${currentYear}_${month}_${type}`, id));
+    await deleteDoc(sudahMigrasi()
+      ? doc(txCol(uid3), id)
+      : doc(oldCol(uid3, currentYear, month, type), id));
     if(entri?.receiptId) {
       deleteDoc(doc(db, `users/${uid3}/receipts`, entri.receiptId))
         .catch(e => console.error('Foto struk gagal dihapus:', e));
@@ -2082,7 +2231,8 @@ function highlight(text) {
 // polanya: satu salinan di memori yang dijaga tetap mutakhir oleh onSnapshot,
 // dengan penulisan langsung ke Firestore.
 
-let settingsCache = { recurring: [], budgetLimits: {} };
+let bacaDariModelBaru = false;
+let settingsCache = { recurring: [], budgetLimits: {}, migratedV2: false };
 let unsubSettings = null;
 
 function settingsRef(uid) { return doc(db, `users/${uid}/settings`, 'app'); }
@@ -2109,8 +2259,16 @@ async function initSettings(uid) {
     const d = snap.data() || {};
     settingsCache = {
       recurring:    Array.isArray(d.recurring) ? d.recurring : [],
-      budgetLimits: (d.budgetLimits && typeof d.budgetLimits === 'object') ? d.budgetLimits : {}
+      budgetLimits: (d.budgetLimits && typeof d.budgetLimits === 'object') ? d.budgetLimits : {},
+      migratedV2:   d.migratedV2 === true
     };
+    // Begitu bendera berubah dari false ke true, listener harus dipasang ulang
+    // agar berpindah ke koleksi baru. Selama masih false, semuanya tetap di
+    // koleksi lama dan pengguna tidak melihat perubahan apa pun.
+    if (settingsCache.migratedV2 && !bacaDariModelBaru) {
+      bacaDariModelBaru = true;
+      if (currentUser) subscribeMonth();
+    }
     if (currentTab === 'recurring') renderRecurringList();
     if (currentTab === 'out') renderBudgetGrid();
   }, e => console.error('Gagal memantau pengaturan:', e));
@@ -2192,8 +2350,10 @@ window.applyRecurring = async function(id) {
   try {
     const uid2 = uidAtau('Sesi belum siap — muat ulang halaman lalu coba lagi.');
     if(!uid2) throw new Error('Sesi tidak aktif.');
-    const colPath = `users/${uid2}/${currentYear}_${month}_${rec.type}`;
-    await addDoc(collection(db, colPath), {...data, createdAt: serverTimestamp()});
+    await addDoc(sudahMigrasi() ? txCol(uid2) : oldCol(uid2, currentYear, month, rec.type), {
+      ...(sudahMigrasi() ? bungkusTx(data, currentYear, month, rec.type) : data),
+      createdAt: serverTimestamp()
+    });
     showToast(`✅ "${rec.name}" diterapkan ke ${month}!`,'success');
   } catch(e) {
     cache[currentYear][month][rec.type] = cache[currentYear][month][rec.type].filter(x=>x.id!==tempId);
@@ -3067,21 +3227,32 @@ window.exportAllData = async function() {
     // (132 giliran berurutan), sehingga backup terasa menggantung sangat lama.
     await Promise.all(years.map(async year => {
       backup.years[year] = {};
-      await Promise.all(MONTHS.map(async month => {
+      if (sudahMigrasi()) {
+        // Satu query per tahun, bukan 24. Bentuk file backup-nya sengaja tidak
+        // berubah supaya file lama tetap bisa dipulihkan.
         try {
-          const [snapIn, snapOut] = await Promise.all([
-            getDocs(collection(db, `users/${uid}/${year}_${month}_in`)),
-            getDocs(collection(db, `users/${uid}/${year}_${month}_out`))
-          ]);
-          const inData  = snapIn.docs.map(d=>({...d.data()}));
-          const outData = snapOut.docs.map(d=>({...d.data()}));
-          if(inData.length || outData.length) {
-            backup.years[year][month] = { in: inData, out: outData };
-          }
-        } catch(e2) {
-          // lewati bulan yang gagal dibaca
-        }
-      }));
+          const snap = await getDocs(query(txCol(uid), where('year','==',Number(year))));
+          snap.docs.forEach(d => {
+            const { periode, year:_y, month, flow, ...isi } = d.data();
+            if (!month || (flow !== 'in' && flow !== 'out')) return;
+            (backup.years[year][month] ??= { in: [], out: [] })[flow].push(isi);
+          });
+        } catch(e2) { console.error(`Backup tahun ${year} gagal:`, e2); }
+      } else {
+        await Promise.all(MONTHS.map(async month => {
+          try {
+            const [snapIn, snapOut] = await Promise.all([
+              getDocs(oldCol(uid, year, month, 'in')),
+              getDocs(oldCol(uid, year, month, 'out'))
+            ]);
+            const inData  = snapIn.docs.map(d=>({...d.data()}));
+            const outData = snapOut.docs.map(d=>({...d.data()}));
+            if(inData.length || outData.length) {
+              backup.years[year][month] = { in: inData, out: outData };
+            }
+          } catch(e2) { /* lewati bulan yang gagal dibaca */ }
+        }));
+      }
       if(Object.keys(backup.years[year]).length === 0) delete backup.years[year];
     }));
 
@@ -3141,20 +3312,22 @@ window.handleRestoreFile = function(event) {
           for (const type of ['in','out']) {
             const entries = monthData[type] || [];
             if (!entries.length) continue;
-            const colPath = `users/${uid}/${year}_${month}_${type}`;
+            const tujuan = sudahMigrasi() ? txCol(uid) : oldCol(uid, year, month, type);
 
             // Restore dulu bersifat menambah tanpa memeriksa, sehingga memulihkan
             // file yang sama dua kali menggandakan seluruh data tanpa peringatan.
             // Sekarang isi bulan itu dibaca dulu, lalu entri yang sudah persis
             // sama dilewati. Kuncinya gabungan tanggal+keterangan+nominal+kategori
             // — bukan id dokumen, karena id lama tidak ikut tersimpan di backup.
-            const adaSnap = await getDocs(collection(db, colPath));
+            const adaSnap = sudahMigrasi()
+              ? await getDocs(query(txCol(uid), where('periode','==',periodeKey(year, month, type))))
+              : await getDocs(oldCol(uid, year, month, type));
             const sudahAda = new Set(adaSnap.docs.map(d => kunciEntri(d.data())));
 
             for (const entry of entries) {
-              const { id, ...data } = entry;
+              const { id, periode, year:_y, month:_m, flow, ...data } = entry;
               if (sudahAda.has(kunciEntri(data))) { lewat++; continue; }
-              await addDoc(collection(db, colPath), data);
+              await addDoc(tujuan, sudahMigrasi() ? bungkusTx(data, year, month, type) : data);
               sudahAda.add(kunciEntri(data));   // cegah duplikat di dalam file itu sendiri
               count++;
             }
@@ -3353,7 +3526,8 @@ window.logoutUser = async function() {
   // Pengaturan juga milik akun: lepas listener dan kosongkan, agar akun berikutnya
   // yang login di perangkat ini tidak melihat transaksi rutin milik akun sebelumnya.
   if(unsubSettings) { unsubSettings(); unsubSettings = null; }
-  settingsCache = { recurring: [], budgetLimits: {} };
+  settingsCache = { recurring: [], budgetLimits: {}, migratedV2: false };
+  bacaDariModelBaru = false;
   if(unsubIn) unsubIn();
   if(unsubOut) unsubOut();
   document.getElementById('mainApp').style.display = 'none';
