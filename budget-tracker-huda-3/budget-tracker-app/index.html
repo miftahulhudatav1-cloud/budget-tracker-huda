@@ -1090,7 +1090,7 @@ import {
 
 // Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
 // perangkat masih menjalankan versi lama dari cache service worker.
-const APP_BUILD = '2026-08-31-z';
+const APP_BUILD = '2026-09-01-a';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
@@ -2909,8 +2909,14 @@ function renderRecurringList() {
 // benar-benar ditambahkan, dan hangus setelah 7 hari.
 
 const RECEIPT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-const MAKS_SISI_PX   = 1400;   // cukup untuk teks struk, menekan biaya token gambar
+const MAKS_SISI_PX   = 1400;   // untuk foto yang DISIMPAN — dibatasi ukuran dokumen
 const TARGET_BYTES   = 600_000; // jauh di bawah batas 1 MiB per dokumen Firestore
+
+// Gambar untuk OCR sengaja dibuat terpisah dan lebih besar. Tesseract butuh
+// piksel: huruf struk yang kecil pada 1400px sering tinggal beberapa piksel
+// tingginya dan tidak terbaca sama sekali. Yang disimpan tetap versi kecil,
+// karena itu dibatasi ukuran dokumen Firestore — dua kebutuhan yang berbeda.
+const MAKS_SISI_OCR  = 2200;
 
 let pendingReceipt = null;     // { base64, mime, dataUrl } sebelum entri disimpan
 
@@ -2936,6 +2942,59 @@ async function decodeImage(file) {
       URL.revokeObjectURL(url);
     }
   }
+}
+
+// Versi khusus OCR: lebih besar, abu-abu, dan kontrasnya diregangkan.
+//
+// Foto struk di HP hampir selalu kurang kontras — kertas keabu-abuan, tinta
+// pudar, cahaya tidak rata. Tesseract memutuskan mana tinta dan mana kertas dari
+// tingkat terang, jadi rentang yang sempit membuat angka menyatu dengan latar.
+// Meregangkan rentangnya memisahkan keduanya sebelum Tesseract menebak.
+//
+// Sengaja TIDAK di-binarisasi (hitam-putih tegas): Tesseract melakukan itu
+// sendiri dengan algoritma yang lebih baik, dan mendahuluinya justru menghapus
+// cetakan tipis yang masih bisa ia selamatkan.
+async function siapkanUntukOCR(file) {
+  const src = await decodeImage(file);
+  const sw = src.width || src.naturalWidth, sh = src.height || src.naturalHeight;
+  if (!sw || !sh) throw new Error('Gambar tidak bisa dibaca.');
+
+  const skala = Math.min(1, MAKS_SISI_OCR / Math.max(sw, sh));
+  const w = Math.round(sw * skala), h = Math.round(sh * skala);
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(src, 0, 0, w, h);
+  src.close?.();
+
+  const img = ctx.getImageData(0, 0, w, h);
+  const px = img.data;
+
+  // Abu-abu berbobot mata (bukan rata-rata) — hijau menyumbang paling besar
+  // pada terang yang dirasakan, dan tinta hitam di kertas putih paling kontras
+  // justru di kanal itu.
+  const abu = new Uint8ClampedArray(w * h);
+  for (let i = 0, j = 0; i < px.length; i += 4, j++) {
+    abu[j] = (px[i] * 0.299 + px[i + 1] * 0.587 + px[i + 2] * 0.114) | 0;
+  }
+
+  // Persentil 2 dan 98, bukan min/max: satu piksel kilatan cahaya atau satu
+  // titik gelap akan mematok rentangnya dan membuat peregangan tak berarti.
+  const hist = new Uint32Array(256);
+  for (let j = 0; j < abu.length; j++) hist[abu[j]]++;
+  const total = abu.length;
+  let lo = 0, hi = 255, akum = 0;
+  for (let v = 0; v < 256; v++) { akum += hist[v]; if (akum >= total * 0.02) { lo = v; break; } }
+  akum = 0;
+  for (let v = 255; v >= 0; v--) { akum += hist[v]; if (akum >= total * 0.02) { hi = v; break; } }
+  const rentang = Math.max(1, hi - lo);
+
+  for (let i = 0, j = 0; i < px.length; i += 4, j++) {
+    const v = Math.max(0, Math.min(255, ((abu[j] - lo) * 255) / rentang));
+    px[i] = px[i + 1] = px[i + 2] = v;
+  }
+  ctx.putImageData(img, 0, 0);
+  return canvas.toDataURL('image/png');   // PNG: tanpa artefak JPEG di tepi huruf
 }
 
 // Kecilkan dan kompres lewat canvas. Kualitas diturunkan bertahap sampai muat.
@@ -2981,7 +3040,10 @@ window.handleReceiptFile = async function(event) {
     if (!img) { showToast('Gambar terlalu besar, coba foto ulang.', 'error'); return; }
 
     const worker = await getOcrWorker(pesan => { hint.textContent = pesan; });
-    const hasil = await worker.recognize(img.dataUrl);
+    // Yang dibaca versi besar & berkontras; yang disimpan tetap versi kecil.
+    hint.textContent = 'Menyiapkan gambar…';
+    const gambarOCR = await siapkanUntukOCR(file);
+    const hasil = await worker.recognize(gambarOCR);
     const teks = hasil?.data?.text || '';
 
     const data = parseReceipt(teks);
@@ -3023,7 +3085,7 @@ function getOcrWorker(onProgress) {
     onProgress?.('Menyiapkan OCR (sekali saja, ±5 MB)…');
     await loadScript(TESSERACT_CDN);
     if (typeof Tesseract === 'undefined') throw new Error('Pustaka OCR tidak termuat.');
-    return await Tesseract.createWorker('ind', 1, {
+    const w = await Tesseract.createWorker('ind', 1, {
       logger: m => {
         if (m.status === 'recognizing text') {
           onProgress?.(`Membaca struk… ${Math.round((m.progress || 0) * 100)}%`);
@@ -3032,6 +3094,12 @@ function getOcrWorker(onProgress) {
         }
       }
     });
+    // Struk adalah satu kolom teks. Mode bawaan (3) mengasumsikan tata letak
+    // halaman yang kompleks dan kerap memecah barisnya keliru, sehingga nominal
+    // terpisah dari kata TOTAL di sebelahnya. Mode 6 memperlakukannya sebagai
+    // satu blok seragam, yang persis bentuk struk.
+    await w.setParameters({ tessedit_pageseg_mode: '6' });
+    return w;
   })().catch(e => { ocrWorkerPromise = null; throw e; });   // biar bisa dicoba lagi
   return ocrWorkerPromise;
 }
@@ -3148,12 +3216,29 @@ function guessCategory(text) {
   return null;
 }
 
+// Cadangan bila kata TOTAL tidak terbaca sama sekali — sering terjadi saat
+// cetakan pudar. Nominal terbesar biasanya memang totalnya, karena ia jumlah
+// dari yang lain. Baris tunai/kembalian tetap dibuang lebih dulu, dan hasilnya
+// SELALU ditandai tebakan: nominal salah yang diisikan diam-diam lebih berbahaya
+// daripada kolom yang dibiarkan kosong.
+function tebakTotalTerbesar(text) {
+  const angka = text.split(/\r?\n/)
+    .filter(b => !POLA_BUKAN_TOTAL.test(b))
+    .flatMap(b => (b.match(/[\d][\d.,]*/g) || []))
+    .map(parseRupiah)
+    .filter(n => n !== null && n >= 1000);   // di bawah seribu hampir pasti bukan total
+  return angka.length ? Math.max(...angka) : null;
+}
+
 function parseReceipt(text) {
+  const pasti = extractTotal(text);
+  const tebakan = pasti === null ? tebakTotalTerbesar(text) : null;
   return {
-    amount: extractTotal(text),
-    date:   extractDate(text),
-    desc:   extractMerchant(text),
-    cat:    guessCategory(text),
+    amount:  pasti ?? tebakan,
+    ditebak: pasti === null && tebakan !== null,
+    date:    extractDate(text),
+    desc:    extractMerchant(text),
+    cat:     guessCategory(text),
   };
 }
 
@@ -3181,7 +3266,11 @@ function applyReceiptToForm(d) {
   // Nominal adalah satu-satunya field yang benar-benar menentukan. Kalau itu pun
   // gagal terbaca, katakan terus terang daripada berpura-pura scan berhasil.
   if (d.amount === null) {
-    showToast('⚠️ Nominal tidak terbaca — isi manual. Coba foto lebih terang & lurus.', 'error');
+    showToast('Nominal tidak terbaca — isi manual. Coba foto lebih terang & lurus.', 'error');
+  } else if (d.ditebak) {
+    // Dibedakan dengan tegas: yang ini bukan hasil membaca baris TOTAL,
+    // melainkan angka terbesar di struk. Sering benar, tapi tidak selalu.
+    showToast('Kata TOTAL tidak terbaca — nominal ditebak dari angka terbesar. Pastikan benar.', 'error');
   } else {
     showToast('Nominal terbaca. Wajib dicek — OCR sering salah baca angka.', 'success');
   }
