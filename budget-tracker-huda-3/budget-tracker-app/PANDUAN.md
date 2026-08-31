@@ -48,8 +48,9 @@ Gratis selamanya untuk pemakaian pribadi (paket Spark). Sekitar 15 menit.
    };
    ```
 
-   `storageBucket` dan `messagingSenderId` tidak perlu — aplikasi ini hanya memakai
-   Authentication dan Firestore.
+   `storageBucket` tidak perlu. `messagingSenderId` hanya dibutuhkan bila kamu
+   mengaktifkan Notifikasi Pengingat — kalau menempel seluruh blok config, nilainya
+   ikut terbaca sendiri.
 
 4. **Continue to console**
 

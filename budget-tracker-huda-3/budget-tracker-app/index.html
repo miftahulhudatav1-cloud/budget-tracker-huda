@@ -703,6 +703,10 @@
       <input type="text" id="cfgProjectId" placeholder="budget-huda" autocomplete="off" autocorrect="off" spellcheck="false">
     </div>
     <div class="setup-input-group">
+      <label>Messaging Sender ID <span style="font-weight:400;opacity:0.7">— opsional, hanya untuk notifikasi</span></label>
+      <input type="text" id="cfgSenderId" placeholder="1081632587089" autocomplete="off" autocorrect="off" spellcheck="false">
+    </div>
+    <div class="setup-input-group">
       <label>App ID</label>
       <input type="text" id="cfgAppId" placeholder="1:123456789:web:abc123" autocomplete="off" autocorrect="off" spellcheck="false">
     </div>
@@ -1086,7 +1090,7 @@ import {
 
 // Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
 // perangkat masih menjalankan versi lama dari cache service worker.
-const APP_BUILD = '2026-08-31-x';
+const APP_BUILD = '2026-08-31-y';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
@@ -1125,6 +1129,10 @@ function bersihkanConfig(c) {
     authDomain: bersih(c.authDomain).replace(/^https?:\/\//i, '').replace(/\/.*$/, ''),
     projectId:  bersih(c.projectId),
     appId:      bersih(c.appId),
+    // Hanya dibutuhkan Cloud Messaging. Dulu bidang ini dibuang karena aplikasi
+    // ini cuma memakai Auth + Firestore — lalu notifikasi ditambahkan dan FCM
+    // menolak jalan tanpanya. Dibiarkan kosong bila pengguna tidak memakainya.
+    messagingSenderId: bersih(c.messagingSenderId),
   };
 }
 
@@ -1140,13 +1148,16 @@ window.tempelConfig = function() {
   const c = bersihkanConfig({
     apiKey: ambil('apiKey'), authDomain: ambil('authDomain'),
     projectId: ambil('projectId'), appId: ambil('appId'),
+    messagingSenderId: ambil('messagingSenderId'),
   });
-  const kosong = Object.entries(c).filter(([, v]) => !v).map(([k]) => k);
+  const kosong = ['apiKey','authDomain','projectId','appId'].filter(k => !c[k]);
   if (kosong.length) { showToast('Tidak ketemu: ' + kosong.join(', '), 'error'); return; }
   document.getElementById('cfgApiKey').value     = c.apiKey;
   document.getElementById('cfgAuthDomain').value = c.authDomain;
   document.getElementById('cfgProjectId').value  = c.projectId;
   document.getElementById('cfgAppId').value      = c.appId;
+  const elSender = document.getElementById('cfgSenderId');
+  if (elSender) elSender.value = c.messagingSenderId || '';
   showToast('Keempat nilai terisi. Periksa lalu Simpan.', 'success');
 };
 
@@ -1178,6 +1189,7 @@ window.saveConfig = function() {
     authDomain:  document.getElementById('cfgAuthDomain').value,
     projectId:   document.getElementById('cfgProjectId').value,
     appId:       document.getElementById('cfgAppId').value,
+    messagingSenderId: document.getElementById('cfgSenderId')?.value || '',
   });
   // storageBucket & messagingSenderId sengaja tidak diisi: app ini hanya memakai
   // Auth + Firestore. Menebak nilainya justru menghasilkan config yang salah.
@@ -2515,6 +2527,20 @@ async function daftarkanPush(vapidKey) {
   const cfg = getConfig();
   const uid = currentUser?.uid;
   if (!cfg || !uid || !vapidKey) return null;
+
+  // Config yang dibuat sebelum fitur notifikasi ada tidak menyimpan bidang ini.
+  // Ditanyakan di sini saja — memaksa mengulang seluruh config demi satu angka
+  // jauh lebih menyakitkan, dan mengetik ulang config justru sumber masalah.
+  if (!cfg.messagingSenderId) {
+    const sid = (prompt(
+      'Sekali saja: tempel Messaging Sender ID.\n\n' +
+      'Firebase Console → Project settings → General → Project number\n' +
+      '(atau baris messagingSenderId di blok firebaseConfig)'
+    ) || '').replace(/\D/g, '');
+    if (!sid) throw new Error('Messaging Sender ID dibutuhkan untuk notifikasi.');
+    localStorage.setItem('fbConfig', JSON.stringify({ ...cfg, messagingSenderId: sid }));
+    cfg.messagingSenderId = sid;
+  }
 
   const { getMessaging, getToken, isSupported } =
     await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging.js');
