@@ -305,12 +305,6 @@
   }
   .header-meta{display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;}
   .header p{color:var(--text-dim);font-size:13px;}
-  .logout-btn{
-    font-family:var(--sans);font-size:11px;font-weight:600;
-    padding:5px 12px;border-radius:8px;border:1px solid var(--border);
-    background:transparent;color:var(--text-muted);cursor:pointer;transition:all 0.2s;
-  }
-  .logout-btn:hover{border-color:var(--red);color:var(--red);}
 
   /* MONTH TABS */
   .month-nav{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;margin-bottom:24px;animation:fade-up 0.6s 0.2s ease both;}
@@ -502,6 +496,27 @@
   .badge-blue{background:var(--blue-dim);color:var(--blue);}
   /* Penanda bulan pada hasil pencarian lintas bulan. */
   .badge-month{background:var(--purple-dim);color:var(--purple);margin-left:6px;}
+
+  /* Menu ⋯ untuk aksi yang jarang dipakai */
+  .menu-wrap{position:relative;display:inline-block;}
+  .menu-panel{
+    position:absolute;right:0;top:calc(100% + 6px);z-index:150;display:none;
+    min-width:210px;padding:6px;border-radius:12px;
+    background:var(--surface);border:1px solid var(--border);
+    box-shadow:0 12px 32px rgba(0,0,0,0.35);
+  }
+  body.light .menu-panel{box-shadow:0 12px 32px rgba(0,0,0,0.14);}
+  .menu-panel.show{display:block;animation:fade-up 0.18s ease both;}
+  .menu-panel button{
+    display:block;width:100%;text-align:left;font-family:var(--sans);
+    font-size:12.5px;font-weight:600;color:var(--text);
+    background:none;border:none;cursor:pointer;padding:9px 12px;border-radius:8px;
+    transition:background 0.15s,color 0.15s;
+  }
+  .menu-panel button:hover{background:var(--surface2);}
+  .menu-panel .menu-danger{color:var(--red);}
+  .menu-panel .menu-danger:hover{background:var(--red-dim);}
+  .menu-sep{height:1px;background:var(--border);margin:5px 8px;}
   .badge-purple{background:var(--purple-dim);color:var(--purple);}
   .del-btn{background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:13px;padding:3px 6px;border-radius:6px;transition:all 0.15s;line-height:1;}
   .del-btn:hover{color:var(--red);background:var(--red-dim);}
@@ -552,6 +567,11 @@
   .search-clear{position:absolute;right:12px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;padding:2px 6px;border-radius:6px;transition:all 0.15s;display:none;}
   .search-clear:hover{color:var(--red);background:var(--red-dim);}
   /* FILTER BAR */
+  .filter-toggle{font-family:var(--sans);font-size:11px;font-weight:600;
+    padding:4px 10px;border-radius:8px;cursor:pointer;margin-left:8px;
+    background:none;border:1px solid var(--border);color:var(--text-muted);transition:all 0.2s;}
+  .filter-toggle:hover{color:var(--text);}
+  .filter-toggle.aktif{border-color:rgba(0,214,143,0.4);color:var(--green);background:var(--green-dim);}
   .filter-bar{display:flex;gap:8px;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid var(--border);background:rgba(255,255,255,0.02);}
   .filter-select{font-family:var(--sans);font-size:11px;font-weight:600;padding:5px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text-muted);cursor:pointer;outline:none;transition:all 0.2s;}
   .filter-select:focus,.filter-select:hover{border-color:rgba(0,214,143,0.3);color:var(--text);}
@@ -586,8 +606,6 @@
   .year-select { font-family:var(--sans); font-size:12px; font-weight:700; padding:5px 12px; border-radius:8px; border:1px solid rgba(0,214,143,0.3); background:var(--green-dim); color:var(--green); cursor:pointer; outline:none; transition:all 0.2s; }
   .year-select option { background:var(--surface2); color:var(--text); font-weight:600; }
   .year-select:focus { box-shadow:0 0 0 3px var(--green-glow); }
-  .export-btn { font-family:var(--sans); font-size:11px; font-weight:700; padding:5px 12px; border-radius:8px; border:1px solid rgba(79,195,247,0.3); background:var(--blue-dim); color:var(--blue); cursor:pointer; transition:all 0.2s; display:flex; align-items:center; gap:5px; }
-  .export-btn:hover { filter:brightness(1.2); transform:translateY(-1px); }
   @keyframes fade-down{from{opacity:0;transform:translateY(-20px)}to{opacity:1;transform:translateY(0)}}
   @keyframes fade-up{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
   ::-webkit-scrollbar{width:6px;}
@@ -718,18 +736,26 @@
   <div class="header">
     <div class="header-badge"><span></span> Cloud Sync Aktif</div>
     <h1 id="appTitle" onclick="ubahNama()" title="Ketuk untuk mengganti nama" style="cursor:pointer">Keuangan</h1>
+    <!-- Hanya yang benar-benar sering dilihat yang tinggal di sini. Enam tombol
+         lain pindah ke menu ⋯ — dulu semuanya berjejer dan membungkus jadi empat
+         baris di HP, memakan sepertiga layar sebelum satu angka pun terlihat. -->
     <div class="header-meta">
-      <p>Pekerja &amp; Mahasiswa</p>
       <select class="year-select" id="yearSelect" onchange="switchYear(parseInt(this.value))"></select>
-      <button class="export-btn" onclick="exportToExcel()">⬇ Export Excel</button>
-      <button class="export-btn" onclick="exportToPDF()" style="border-color:rgba(255,107,107,0.3);color:var(--red);">⬇ Export PDF</button>
       <span class="sync-badge" id="syncBadge"><span class="sync-dot"></span> <span id="syncText">Tersambung</span></span>
       <div class="user-pill" id="userPill" style="display:none"><div class="user-avatar" id="userAvatar">👤</div><span id="userEmail">-</span></div>
       <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()">🌙</button>
-      <button class="logout-btn" onclick="openBackupModal()" style="border-color:rgba(255,179,71,0.3);color:var(--gold)">💾 Backup</button>
-      <button class="logout-btn" onclick="logoutUser()">Keluar</button>
-      <button class="logout-btn" onclick="resetConfig()" style="border-color:rgba(79,195,247,0.3);color:var(--blue)">Ganti Firebase</button>
-      <button class="logout-btn" onclick="runDiagnostics()" style="border-color:rgba(179,157,219,0.35);color:var(--purple)">🩺 Diagnosa</button>
+      <div class="menu-wrap">
+        <button class="theme-toggle" id="menuBtn" onclick="toggleMenu(event)" title="Menu lainnya" aria-haspopup="true">⋯</button>
+        <div class="menu-panel" id="menuPanel">
+          <button onclick="tutupMenu();exportToExcel()">⬇ Export Excel</button>
+          <button onclick="tutupMenu();exportToPDF()">⬇ Export PDF</button>
+          <button onclick="tutupMenu();openBackupModal()">💾 Backup &amp; Restore</button>
+          <div class="menu-sep"></div>
+          <button onclick="tutupMenu();runDiagnostics()">🩺 Diagnosa Koneksi</button>
+          <button onclick="tutupMenu();resetConfig()">🔧 Ganti Firebase</button>
+          <button class="menu-danger" onclick="tutupMenu();logoutUser()">Keluar</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -851,8 +877,8 @@
       <button class="add-btn btn-in" id="btnAddIn" onclick="addEntry('in')">＋ Tambah Pemasukan</button>
     </div>
     <div class="table-wrap">
-      <div class="table-header"><span class="table-title" style="color:var(--green)">Daftar Pemasukan</span><span class="table-count" id="inCount">0 entri</span></div>
-      <div class="filter-bar" id="inFilterBar">
+      <div class="table-header"><span class="table-title" style="color:var(--green)">Daftar Pemasukan</span><span class="table-count" id="inCount">0 entri</span><button class="filter-toggle" id="inFilterToggle" onclick="toggleFilter('in')">⚙ Filter</button></div>
+      <div class="filter-bar" id="inFilterBar" style="display:none">
         <span class="filter-label">Filter:</span>
         <select class="filter-select" id="inFilterKat" onchange="applyFilter('in')"><option value="">Semua Kategori</option><option>Pekerjaan</option><option>Beasiswa</option><option>Freelance</option><option>Keluarga</option><option>Investasi</option><option>Hadiah</option><option>Lainnya</option></select>
         <select class="filter-select" id="inFilterJenis" onchange="applyFilter('in')"><option value="">Semua Jenis</option><option>Gaji Tetap</option><option>Gaji Tidak Tetap</option><option>Pendapatan Sampingan</option><option>Beasiswa Rutin</option><option>Tunjangan</option><option>Bonus</option><option>Hadiah</option><option>Lainnya</option></select>
@@ -919,8 +945,8 @@
     </div>
 
     <div class="table-wrap">
-      <div class="table-header"><span class="table-title" style="color:var(--red)">Daftar Pengeluaran</span><span class="table-count" id="outCount">0 entri</span></div>
-      <div class="filter-bar" id="outFilterBar">
+      <div class="table-header"><span class="table-title" style="color:var(--red)">Daftar Pengeluaran</span><span class="table-count" id="outCount">0 entri</span><button class="filter-toggle" id="outFilterToggle" onclick="toggleFilter('out')">⚙ Filter</button></div>
+      <div class="filter-bar" id="outFilterBar" style="display:none">
         <span class="filter-label">Filter:</span>
         <select class="filter-select" id="outFilterKat" onchange="applyFilter('out')"><option value="">Semua Kategori</option><option>Tempat Tinggal</option><option>Makanan</option><option>Transportasi</option><option>Kuliah</option><option>Komunikasi</option><option>Kesehatan</option><option>Hiburan</option><option>Tabungan</option><option>Lainnya</option></select>
         <select class="filter-select" id="outFilterJenis" onchange="applyFilter('out')"><option value="">Semua Jenis</option><option>Pengeluaran Tetap</option><option>Pengeluaran Tidak Tetap</option><option>Kebutuhan Pokok</option><option>Kebutuhan Sekunder</option><option>Keinginan</option><option>Tagihan</option><option>Pendidikan</option><option>Darurat</option></select>
@@ -1027,7 +1053,7 @@ import {
 
 // Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
 // perangkat masih menjalankan versi lama dari cache service worker.
-const APP_BUILD = '2026-08-31-o';
+const APP_BUILD = '2026-08-31-p';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
@@ -2031,6 +2057,7 @@ function renderFilteredTable(type) {
     ? `${filtered.length} entri · seluruh ${currentYear}`
     : (isFiltered ? `${filtered.length} / ${all.length} entri` : `${all.length} entri`);
 
+  perbaruiTombolFilter(type);
   renderTable(type, filtered, total, isFiltered);
 }
 
@@ -2912,6 +2939,50 @@ function perbaruiRingkasanBudget(alerts, jmlDiset) {
     ? `(${jmlDiset} diset · ${bahaya} habis)`
     : (alerts.length ? `(${jmlDiset} diset · ${alerts.length} hampir habis)` : `(${jmlDiset} diset)`);
 }
+
+// ── FILTER TABEL ───────────────────────────────
+// Lima dropdown yang selalu terbuka di atas tiap tabel, padahal jarang dipakai.
+// Disembunyikan di balik tombol, tapi tombolnya menyala bila ada filter aktif —
+// filter yang bekerja diam-diam sambil tersembunyi akan membingungkan.
+function filterAktif(type) {
+  const ids = type === 'in'
+    ? ['inFilterKat','inFilterJenis','inFilterFrom','inFilterTo']
+    : ['outFilterKat','outFilterJenis','outFilterMetode','outFilterFrom','outFilterTo'];
+  return ids.filter(id => (document.getElementById(id)?.value || '')).length;
+}
+
+function perbaruiTombolFilter(type) {
+  const btn = document.getElementById(type + 'FilterToggle');
+  if (!btn) return;
+  const n = filterAktif(type);
+  btn.textContent = n ? `⚙ Filter (${n})` : '⚙ Filter';
+  btn.classList.toggle('aktif', n > 0);
+}
+
+window.toggleFilter = function(type) {
+  const bar = document.getElementById(type + 'FilterBar');
+  if (!bar) return;
+  bar.style.display = bar.style.display === 'none' ? 'flex' : 'none';
+};
+
+// ── MENU ⋯ ─────────────────────────────────────
+window.tutupMenu = function() {
+  document.getElementById('menuPanel')?.classList.remove('show');
+};
+
+window.toggleMenu = function(ev) {
+  // Tanpa ini, klik pada tombolnya sendiri langsung ditangkap listener dokumen
+  // di bawah dan menutup menu yang baru saja dibuka.
+  ev?.stopPropagation();
+  document.getElementById('menuPanel')?.classList.toggle('show');
+};
+
+// Menutup saat menyentuh di luar menu, dan saat menekan Esc.
+document.addEventListener('click', e => {
+  const panel = document.getElementById('menuPanel');
+  if (panel?.classList.contains('show') && !e.target.closest('.menu-wrap')) tutupMenu();
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') tutupMenu(); });
 
 window.toggleBudget = function() {
   const section = document.getElementById('budgetSection');
