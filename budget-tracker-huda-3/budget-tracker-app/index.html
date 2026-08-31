@@ -140,7 +140,7 @@
   #authScreen{position:fixed;inset:0;z-index:101;background:var(--bg);display:none;align-items:center;justify-content:center;padding:24px;}
   .auth-card{background:var(--surface);border:1px solid var(--border);border-radius:24px;padding:36px 32px;max-width:420px;width:100%;animation:fade-up 0.6s ease both;}
   .auth-logo{font-size:36px;margin-bottom:16px;}
-  .auth-card h2{font-size:22px;font-weight:800;margin-bottom:6px;background:linear-gradient(135deg,#fff,var(--green));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;}
+  .auth-card h2{font-size:22px;font-weight:800;line-height:1.3;padding-bottom:0.08em;margin-bottom:6px;background:linear-gradient(135deg,#fff,var(--green));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;}
   .auth-card p{font-size:13px;color:var(--text-muted);margin-bottom:24px;}
   .auth-tabs{display:flex;gap:8px;margin-bottom:20px;}
   .auth-tab{flex:1;font-family:var(--sans);font-size:13px;font-weight:700;padding:9px;border-radius:10px;border:1px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer;transition:all 0.2s;}
@@ -240,7 +240,7 @@
     margin:auto;
   }
   .setup-logo{font-size:36px;margin-bottom:16px;}
-  .setup-card h2{font-size:22px;font-weight:800;margin-bottom:8px;
+  .setup-card h2{font-size:22px;font-weight:800;line-height:1.3;padding-bottom:0.08em;margin-bottom:8px;
     background:linear-gradient(135deg,#fff,var(--green));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;}
   .setup-card p{font-size:13px;color:var(--text-muted);margin-bottom:24px;line-height:1.6;}
   .setup-steps{margin-bottom:24px;}
@@ -295,9 +295,13 @@
   .header-badge span{width:6px;height:6px;border-radius:50%;background:var(--green);animation:pulse-dot 2s infinite;}
   @keyframes pulse-dot{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.5;transform:scale(0.8)}}
   .header h1{
-    font-size:clamp(26px,5vw,40px);font-weight:800;line-height:1.1;
+    /* line-height:1.1 memotong kaki huruf g/y/p: dengan background-clip:text,
+       gradien hanya dicat sebatas kotak baris, jadi apa pun yang menjuntai di
+       bawahnya hilang. Dilonggarkan, plus padding bawah karena area cat memang
+       mencakup padding. margin dikurangi agar jarak keseluruhan tetap sama. */
+    font-size:clamp(26px,5vw,40px);font-weight:800;line-height:1.28;padding-bottom:0.08em;
     background:linear-gradient(135deg,#fff 0%,var(--green) 60%,var(--blue) 100%);
-    -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;margin-bottom:8px;
+    -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;margin-bottom:4px;
   }
   .header-meta{display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;}
   .header p{color:var(--text-dim);font-size:13px;}
@@ -1016,7 +1020,7 @@ import {
 
 // Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
 // perangkat masih menjalankan versi lama dari cache service worker.
-const APP_BUILD = '2026-08-31-h';
+const APP_BUILD = '2026-08-31-i';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
