@@ -262,8 +262,26 @@ Firebase Console → ⚙️ **Project settings** → tab **Cloud Messaging** →
 
 ### 2. Aktifkan di aplikasi
 
-Menu **⋯** → **Notifikasi Pengingat** → tempel VAPID key → izinkan notifikasi
-saat browser bertanya.
+Menu **⋯** → **Notifikasi Pengingat**.
+
+**Kalau config-mu dibuat sebelum fitur ini ada**, akan diminta **Messaging Sender
+ID** lebih dulu — angka di antara dua titik dua pertama pada `appId`, sama dengan
+**Project number** di Project settings → General:
+
+```
+1:1081632587089:web:2854ef5e...
+  └────┬─────┘
+   Sender ID
+```
+
+Setelah diisi, **halaman dimuat ulang sendiri**, lalu buka menu itu **sekali
+lagi**. Ini perlu karena Firebase membaca config saat halaman dimuat; nilai baru
+tidak terbaca oleh instance yang sudah terlanjur berjalan.
+
+Kalau menempel seluruh blok `firebaseConfig` lewat Ganti Firebase, nilainya ikut
+terbaca sendiri dan pertanyaan ini tidak muncul.
+
+Berikutnya: tempel **VAPID key** → izinkan notifikasi saat browser bertanya.
 
 Ulangi di tiap perangkat yang ingin menerima notifikasi. Untuk mematikan, buka
 menu yang sama sekali lagi.
