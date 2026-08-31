@@ -1061,7 +1061,7 @@ import {
 
 // Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
 // perangkat masih menjalankan versi lama dari cache service worker.
-const APP_BUILD = '2026-08-31-q';
+const APP_BUILD = '2026-08-31-r';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
@@ -2131,6 +2131,15 @@ function renderTable(type, entries, total, isFiltered=false) {
 
 let barChartInst = null, pieChartInst = null;
 
+// Chart.js menerima warna lewat properti objek, bukan CSS, jadi variabel tema
+// tidak ikut terbaca — warnanya harus diambil manual. Sebelumnya nilainya dipaku
+// untuk latar gelap, sehingga di mode terang garis grid berwarna putih di atas
+// putih (hilang sama sekali) dan label sumbu nyaris tak terbaca.
+function warnaTema(nama, cadangan) {
+  const v = getComputedStyle(document.body).getPropertyValue(nama).trim();
+  return v || cadangan;
+}
+
 function renderAnnual() {
   let totalIn=0,totalOut=0;
   const grid=document.getElementById('annualGrid');
@@ -2183,10 +2192,10 @@ function renderAnnual() {
       },
       options: {
         responsive:true, maintainAspectRatio:false,
-        plugins:{ legend:{ labels:{ color:'#9CA3AF', font:{size:10} } } },
+        plugins:{ legend:{ labels:{ color:warnaTema('--text-dim','#9CA3AF'), font:{size:10} } } },
         scales:{
-          x:{ ticks:{color:'#6B7280',font:{size:10}}, grid:{color:'rgba(255,255,255,0.04)'} },
-          y:{ ticks:{color:'#6B7280',font:{size:10}, callback:v=>v>=1e6?'Rp '+(v/1e6).toFixed(1)+'jt':'Rp '+v.toLocaleString('id')}, grid:{color:'rgba(255,255,255,0.04)'} }
+          x:{ ticks:{color:warnaTema('--text-muted','#6B7280'),font:{size:10}}, grid:{color:warnaTema('--border','rgba(255,255,255,0.08)')} },
+          y:{ ticks:{color:warnaTema('--text-muted','#6B7280'),font:{size:10}, callback:v=>v>=1e6?'Rp '+(v/1e6).toFixed(1)+'jt':'Rp '+v.toLocaleString('id')}, grid:{color:warnaTema('--border','rgba(255,255,255,0.08)')} }
         }
       }
     });
@@ -2203,12 +2212,12 @@ function renderAnnual() {
       type: 'doughnut',
       data: {
         labels,
-        datasets:[{ data:values, backgroundColor:COLORS.slice(0,labels.length), borderWidth:2, borderColor:'#1a2235' }]
+        datasets:[{ data:values, backgroundColor:COLORS.slice(0,labels.length), borderWidth:2, borderColor:warnaTema('--surface','#1a2235') }]
       },
       options: {
         responsive:true, maintainAspectRatio:false,
         plugins:{
-          legend:{ position:'bottom', labels:{ color:'#9CA3AF', font:{size:10}, padding:8, boxWidth:12 } },
+          legend:{ position:'bottom', labels:{ color:warnaTema('--text-dim','#9CA3AF'), font:{size:10}, padding:8, boxWidth:12 } },
           tooltip:{ callbacks:{ label: ctx => ` ${ctx.label}: ${fmt(ctx.raw)}` } }
         }
       }
@@ -2217,7 +2226,7 @@ function renderAnnual() {
     if(pieChartInst) { pieChartInst.destroy(); pieChartInst=null; }
     const pCtx = pieCtx.getContext('2d');
     pCtx.clearRect(0,0,pieCtx.width,pieCtx.height);
-    pCtx.fillStyle='#6B7280'; pCtx.font='13px Plus Jakarta Sans';
+    pCtx.fillStyle=warnaTema('--text-muted','#6B7280'); pCtx.font='13px Plus Jakarta Sans';
     pCtx.textAlign='center'; pCtx.fillText('Belum ada data pengeluaran', pieCtx.width/2, pieCtx.height/2);
   }
 }
@@ -2309,7 +2318,7 @@ function highlight(text) {
   // Escape tiap potongan secara terpisah supaya <mark> tetap utuh sementara
   // teks dari user tidak pernah diperlakukan sebagai HTML.
   return esc(text.slice(0,idx))
-    + `<mark style="background:rgba(0,214,143,0.25);color:var(--green);border-radius:3px;padding:0 2px">${esc(text.slice(idx,idx+q.length))}</mark>`
+    + `<mark style="background:var(--green-glow);color:var(--green);border-radius:3px;padding:0 2px">${esc(text.slice(idx,idx+q.length))}</mark>`
     + esc(text.slice(idx+q.length));
 }
 
@@ -3713,6 +3722,10 @@ function applyTheme(theme) {
 window.toggleTheme = function() {
   const current = localStorage.getItem('theme') || 'dark';
   applyTheme(current === 'dark' ? 'light' : 'dark');
+  // Warna grafik dibaca sekali saat digambar, jadi harus digambar ulang —
+  // kalau tidak, sumbu dan garis grid tetap memakai warna tema sebelumnya
+  // sampai pengguna kebetulan berpindah tab.
+  if (currentTab === 'annual') renderAnnual();
 };
 
 // Apply saved theme on load
