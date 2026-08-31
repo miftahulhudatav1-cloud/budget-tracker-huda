@@ -947,7 +947,7 @@ import {
 
 // Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
 // perangkat masih menjalankan versi lama dari cache service worker.
-const APP_BUILD = '2026-08-31-a';
+const APP_BUILD = '2026-08-31-b';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
@@ -1050,6 +1050,7 @@ function startApp(cfg) {
         if(emailEl) emailEl.textContent = user.email.split('@')[0];
         if(avatar) avatar.textContent = user.email[0].toUpperCase();
         setTimeout(() => { try { buildUI(); } catch(e2) { console.error('buildUI error:', e2); } }, 100);
+        cekTokenSesuaiProject(user);
       } else {
         currentUser = null;
         document.getElementById('mainApp').style.display = 'none';
@@ -1196,6 +1197,28 @@ function jelaskanError(err) {
 // Firestore, berarti login dan database menunjuk project berbeda — dan setiap baca
 // pasti ditolak meski rules-nya sudah benar.
 let diagSudahTampil = false;
+
+// apiKey-lah yang menentukan Firebase Auth menghubungi project mana — bukan
+// authDomain, dan apiKey tidak memuat nama project sehingga tidak bisa diperiksa
+// saat config disimpan. Satu-satunya cara memastikannya adalah membaca klaim `aud`
+// pada token yang benar-benar terbit. Diperiksa tepat setelah login, bukan menunggu
+// pembacaan pertama gagal dengan "permission denied" yang menyesatkan.
+async function cekTokenSesuaiProject(user) {
+  const cfg = getConfig();
+  if (!cfg?.projectId) return;
+  try {
+    const p = decodeJwtPayload(await user.getIdToken());
+    if (p?.aud && p.aud !== cfg.projectId) {
+      showToast(
+        `Config salah: apiKey milik project "${p.aud}", tapi database diarahkan ke "${cfg.projectId}". ` +
+        `Ambil KEEMPAT nilai dari project yang sama lewat tombol Ganti Firebase.`,
+        'error'
+      );
+    }
+  } catch (e) {
+    console.warn('Tidak bisa memeriksa kecocokan token:', e);
+  }
+}
 
 function decodeJwtPayload(token) {
   try {
