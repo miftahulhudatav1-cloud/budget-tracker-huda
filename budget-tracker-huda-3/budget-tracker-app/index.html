@@ -904,10 +904,18 @@
     <!-- BUDGET NOTIFICATIONS -->
     <div id="budgetNotifs"></div>
 
-    <!-- BUDGET LIMITS -->
-    <div class="budget-section">
-      <div class="budget-section-title">🎯 Batas Budget per Kategori — <span style="font-size:11px;color:var(--text-muted);font-weight:400">Klik ✏ untuk set limit</span></div>
-      <div class="budget-grid" id="budgetGrid"></div>
+    <!-- BUDGET LIMITS — dilipat secara bawaan: sembilan kategori bertumpuk
+         memenuhi layar HP, padahal jarang diubah. Peringatan budget hampir habis
+         tetap di luar lipatan (#budgetNotifs di atas) agar selalu terlihat. -->
+    <div class="insight-toggle-bar" onclick="toggleBudget()">
+      <span>🎯 <strong>Batas Budget per Kategori</strong> <span id="budgetCount" style="font-size:11px;opacity:0.7;"></span></span>
+      <span id="budgetChevron" style="font-size:14px;transition:transform 0.3s;">▼</span>
+    </div>
+    <div id="budgetSection" style="display:none;overflow:hidden;margin-bottom:16px;">
+      <div class="budget-section">
+        <div class="budget-section-title">Klik ✏ pada kategori untuk mengatur limitnya</div>
+        <div class="budget-grid" id="budgetGrid"></div>
+      </div>
     </div>
 
     <div class="table-wrap">
@@ -1019,7 +1027,7 @@ import {
 
 // Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
 // perangkat masih menjalankan versi lama dari cache service worker.
-const APP_BUILD = '2026-08-31-n';
+const APP_BUILD = '2026-08-31-o';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
@@ -1211,6 +1219,14 @@ function buildUI() {
   });
   const today = new Date().toISOString().split('T')[0];
   ['inDate','outDate'].forEach(id => { document.getElementById(id).value = today; });
+  // Restore budget open state — dibiarkan tertutup kecuali pengguna membukanya.
+  if(localStorage.getItem('budgetOpen') === '1') {
+    const bs = document.getElementById('budgetSection');
+    const bc = document.getElementById('budgetChevron');
+    if(bs) bs.style.display = 'block';
+    if(bc) bc.style.transform = 'rotate(180deg)';
+  }
+
   // Restore insight open state
   if(localStorage.getItem('insightOpen') === '1') {
     window.insightOpen = true;
@@ -2882,7 +2898,30 @@ function renderBudgetGrid() {
   } else {
     notifs.innerHTML = '';
   }
+
+  perbaruiRingkasanBudget(alerts, Object.values(limits).filter(v => v > 0).length);
 }
+
+// Ringkasan di bar supaya kondisi budget tetap terbaca tanpa membuka lipatannya.
+function perbaruiRingkasanBudget(alerts, jmlDiset) {
+  const el = document.getElementById('budgetCount');
+  if (!el) return;
+  if (!jmlDiset) { el.textContent = '(belum ada limit)'; return; }
+  const bahaya = alerts.filter(a => a.isDanger).length;
+  el.textContent = bahaya
+    ? `(${jmlDiset} diset · ${bahaya} habis)`
+    : (alerts.length ? `(${jmlDiset} diset · ${alerts.length} hampir habis)` : `(${jmlDiset} diset)`);
+}
+
+window.toggleBudget = function() {
+  const section = document.getElementById('budgetSection');
+  const chevron = document.getElementById('budgetChevron');
+  if (!section || !chevron) return;
+  const buka = section.style.display === 'none';
+  section.style.display = buka ? 'block' : 'none';
+  chevron.style.transform = buka ? 'rotate(180deg)' : 'rotate(0deg)';
+  try { localStorage.setItem('budgetOpen', buka ? '1' : '0'); } catch(e) {}
+};
 
 window.toggleBudgetInput = function(cat) {
   const key = cat.replace(/ /g,'_');
