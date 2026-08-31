@@ -1,7 +1,7 @@
 {
-  "name": "Budget Tracker Huda",
-  "short_name": "Budget Huda",
-  "description": "Catat pemasukan & pengeluaran harian — sync ke cloud",
+  "name": "Budget Tracker",
+  "short_name": "Budget",
+  "description": "Catat pemasukan & pengeluaran harian, tersinkron ke cloud",
   "start_url": "./",
   "scope": "./",
   "id": "/",
