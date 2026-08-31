@@ -26,6 +26,27 @@ cek('kutip digandakan',              csvEscape('Kopi "susu"'), '"Kopi ""susu"""'
 cek('baris baru dikutip',            csvEscape('baris1\nbaris2'), '"baris1\nbaris2"');
 cek('CR dikutip',                    csvEscape('a\rb'), '"a\rb"');
 
+// ── sel yang diawali tanda rumus ─────────────────
+// Excel membaca sel yang diawali = + - @ sebagai RUMUS. Keterangan yang sangat
+// wajar seperti "-Belanja" langsung jadi sel error, dan rumus yang disusun
+// sengaja bisa dijalankan saat berkasnya dibuka.
+cek('diawali minus diberi apostrof',  csvEscape('-Belanja bulanan'), "'-Belanja bulanan");
+cek('diawali sama dengan',            csvEscape('=1+1'), "'=1+1");
+cek('diawali plus',                   csvEscape('+ ongkir'), "'+ ongkir");
+cek('diawali at',                     csvEscape('@rumah'), "'@rumah");
+cek('diawali tab',                    csvEscape('\tkopi'), "'\tkopi");
+cek('rumus berbahaya dilumpuhkan',
+  csvEscape('=HYPERLINK("http://jahat","klik")'),
+  '"\'=HYPERLINK(""http://jahat"",""klik"")"');
+
+// Tanda itu hanya berbahaya di AWAL sel, bukan di tengah.
+cek('minus di tengah dibiarkan',      csvEscape('Bayar 10-12 Agustus'), 'Bayar 10-12 Agustus');
+cek('sama dengan di tengah dibiarkan',csvEscape('A=B'), 'A=B');
+
+// Kolom Jumlah harus tetap angka, kalau tidak Excel tidak bisa menjumlahnya.
+cek('angka negatif tetap polos',      csvEscape(-5000), '-5000');
+cek('nol tetap polos',                csvEscape(0), '0');
+
 // Satu baris utuh harus terurai kembali persis seperti aslinya
 const asli = ['Agustus', '2026-08-31', 'Pengeluaran', 'Sate; ayam', 'Makanan', '', 'Tunai', 'pakai "diskon"', 44400];
 const baris = asli.map(csvEscape).join(';');

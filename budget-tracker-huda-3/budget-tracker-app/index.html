@@ -1126,7 +1126,7 @@ import {
 
 // Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
 // perangkat masih menjalankan versi lama dari cache service worker.
-const APP_BUILD = '2026-09-01-g';
+const APP_BUILD = '2026-09-01-h';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
@@ -4031,7 +4031,11 @@ window.renderInsights = function() {
   // 6. Frekuensi transaksi
   if(outs.length >= 20) {
     insights.push({type:'tip', icon:'✅', text:`Kamu sudah mencatat <strong>${outs.length} transaksi</strong> bulan ini — konsistensi yang bagus! Terus pertahankan.`});
-  } else if(outs.length < 5 && currentMonth === new Date().getMonth()) {
+    // Tahun ikut diperiksa. Tanpa itu, membuka Januari tahun lalu di bulan
+    // Januari akan berbunyi "coba catat setiap hari sebelum tidur" untuk bulan
+    // yang sudah lama selesai — nasihat yang tidak mungkin dijalankan.
+  } else if(outs.length < 5 && currentMonth === new Date().getMonth()
+            && currentYear === new Date().getFullYear()) {
     insights.push({type:'tip', icon:'📝', text:`Baru <strong>${outs.length} transaksi</strong> tercatat. Coba catat setiap hari sebelum tidur supaya tidak ada yang terlewat.`});
   }
 
@@ -4062,8 +4066,20 @@ window.renderInsights = function() {
 //   - BOM UTF-8, tanpanya huruf beraksen dan simbol rusak saat dibuka Excel.
 // Nominal ditulis sebagai angka polos (bukan "Rp 30.000") agar bisa dijumlah.
 function csvEscape(v) {
+  // Angka dibiarkan apa adanya, supaya kolom Jumlah tetap bisa dijumlah Excel.
+  if (typeof v === 'number' && Number.isFinite(v)) return String(v);
   const s = String(v ?? '');
-  return /[";\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+
+  // Excel memperlakukan sel yang diawali = + - @ (juga tab dan CR) sebagai
+  // RUMUS, bukan teks. Ini bukan soal keamanan belaka: keterangan yang sangat
+  // wajar seperti "-Belanja bulanan" atau "+ ongkir" langsung menjadi sel
+  // error saat berkasnya dibuka, dan pemiliknya mengira ekspornya rusak.
+  // Rumus yang disusun sengaja bahkan bisa dijalankan begitu berkas dibuka.
+  //
+  // Apostrof di depan membuat Excel menampilkannya sebagai teks biasa, dan
+  // apostrofnya sendiri tidak ikut terlihat di sel.
+  const aman = /^[=+\-@\t\r]/.test(s) ? "'" + s : s;
+  return /[";\r\n]/.test(aman) ? '"' + aman.replace(/"/g, '""') + '"' : aman;
 }
 
 window.exportToExcel = async function() {
