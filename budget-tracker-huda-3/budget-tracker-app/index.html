@@ -21,7 +21,10 @@
     --gold:#FFB347; --gold-dim:rgba(255,179,71,0.12);
     --blue:#4FC3F7; --blue-dim:rgba(79,195,247,0.12);
     --purple:#B39DDB; --purple-dim:rgba(179,157,219,0.12);
-    --text:#E8EAF0; --text-muted:#6B7280; --text-dim:#9CA3AF;
+    /* --text-muted dulu #6B7280: hanya 3,28-3,95 : 1 terhadap ketiga latar gelap,
+       di bawah ambang keterbacaan 4,5 : 1 — padahal dipakai untuk semua label
+       kecil (TOTAL PEMASUKAN, teks bantuan, placeholder). Sekarang 5,04-6,06. */
+    --text:#E8EAF0; --text-muted:#8792A3; --text-dim:#9CA3AF;
     --mono:'DM Mono',monospace; --sans:'Plus Jakarta Sans',sans-serif;
   }
   *{box-sizing:border-box;margin:0;padding:0;}
@@ -96,9 +99,6 @@
   .budget-notif.warn{background:var(--gold-dim);border:1px solid rgba(255,179,71,0.3);color:var(--gold);}
   .budget-notif.danger{background:var(--red-dim);border:1px solid rgba(255,107,107,0.3);color:var(--red);}
   /* CHARTS */
-  .chart-section{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:20px;margin-bottom:16px;}
-  .chart-title{font-size:13px;font-weight:700;margin-bottom:16px;display:flex;align-items:center;gap:8px;}
-  .chart-title span{font-size:16px;}
   .chart-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;}
   @media(max-width:600px){.chart-grid{grid-template-columns:1fr;}}
   .chart-box{background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:16px;}
@@ -560,9 +560,6 @@
   .filter-reset:hover{background:var(--red-dim);}
   .filter-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.07em;color:var(--text-muted);align-self:center;}
 
-  .backup-btn { font-family:var(--sans); font-size:11px; font-weight:700; padding:5px 12px; border-radius:8px; border:1px solid rgba(179,157,219,0.3); background:var(--purple-dim); color:var(--purple); cursor:pointer; transition:all 0.2s; display:flex; align-items:center; gap:5px; }
-  .backup-btn:hover { filter:brightness(1.2); transform:translateY(-1px); }
-  .restore-input { display:none; }
 
 
 
@@ -1020,7 +1017,7 @@ import {
 
 // Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
 // perangkat masih menjalankan versi lama dari cache service worker.
-const APP_BUILD = '2026-08-31-i';
+const APP_BUILD = '2026-08-31-j';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
@@ -2819,6 +2816,81 @@ window.renderInsights = function() {
       <span class="insight-text">${ins.text}</span>
     </div>`).join('');
 }
+
+// ── EXPORT EXCEL ────────────────────────────────
+// Tombolnya sudah ada di header sejak awal, tapi fungsinya tidak pernah ditulis —
+// menekannya tidak melakukan apa pun. Diisi sekarang.
+//
+// Formatnya CSV, bukan .xlsx: menghasilkan xlsx asli butuh pustaka penyusun ZIP+XML,
+// sementara aplikasi ini sengaja tanpa dependensi. Dua hal membuat CSV-nya terbuka
+// rapi di Excel Indonesia:
+//   - baris `sep=;` di awal, yang membuat Excel memakai pemisah itu apa pun
+//     locale-nya. Tanpa ini, Excel berlocale Indonesia menaruh seluruh baris ke
+//     satu kolom karena mengharapkan titik koma, bukan koma.
+//   - BOM UTF-8, tanpanya huruf beraksen dan simbol rusak saat dibuka Excel.
+// Nominal ditulis sebagai angka polos (bukan "Rp 30.000") agar bisa dijumlah.
+function csvEscape(v) {
+  const s = String(v ?? '');
+  return /[";\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+
+window.exportToExcel = async function() {
+  const uid = uidAtau('Sesi belum siap — muat ulang halaman lalu coba lagi.');
+  if (!uid) return;
+
+  showToast('⏳ Menyiapkan data setahun…', 'success');
+  try {
+    // Hanya bulan berjalan yang dijaga listener; sisanya dimuat sekali di sini.
+    await loadYearIntoCache(currentYear);
+  } catch (e) {
+    console.error('Gagal memuat data tahun:', e);
+    showToast('Gagal memuat data: ' + (e.code || e.message), 'error');
+    return;
+  }
+
+  const kolom = ['Bulan','Tanggal','Arus','Keterangan','Kategori','Jenis','Metode','Catatan','Jumlah'];
+  const baris = [];
+  let totalIn = 0, totalOut = 0;
+
+  MONTHS.forEach(m => {
+    const bulan = cache[currentYear]?.[m];
+    if (!bulan) return;
+    for (const arus of ['in', 'out']) {
+      for (const e of (bulan[arus] || [])) {
+        if (arus === 'in') totalIn += e.amount || 0; else totalOut += e.amount || 0;
+        baris.push([
+          m, e.date || '', arus === 'in' ? 'Pemasukan' : 'Pengeluaran',
+          e.desc || '', e.cat || '', e.type || '',
+          arus === 'out' ? (e.method || '') : '', e.note || '',
+          e.amount ?? 0,
+        ]);
+      }
+    }
+  });
+
+  if (!baris.length) { showToast(`Belum ada data di tahun ${currentYear}.`, 'error'); return; }
+
+  const isi = [
+    'sep=;',
+    kolom.join(';'),
+    ...baris.map(r => r.map(csvEscape).join(';')),
+    '',
+    ['','','','','','','','Total Pemasukan', totalIn].join(';'),
+    ['','','','','','','','Total Pengeluaran', totalOut].join(';'),
+    ['','','','','','','','Selisih', totalIn - totalOut].join(';'),
+  ].join('\r\n');
+
+  const blob = new Blob(['﻿' + isi], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `Keuangan_${currentYear}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast(`✅ ${baris.length} transaksi diekspor.`, 'success');
+};
 
 // ── EXPORT PDF ──────────────────────────────────
 window.exportToPDF = function() {
