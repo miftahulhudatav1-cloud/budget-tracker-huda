@@ -190,9 +190,17 @@
     --red-dim:rgba(192,57,43,0.10); --blue-dim:rgba(9,105,218,0.10);
     --gold-dim:rgba(154,93,6,0.10); --purple-dim:rgba(109,40,217,0.10);
   }
-  /* Gradien judul dimulai dari putih — tidak terlihat sama sekali di latar terang. */
+  /* Gradien judul dimulai dari putih — tidak terlihat sama sekali di latar terang.
+     WAJIB memakai background-image, bukan shorthand `background`: shorthand
+     mereset seluruh properti background-*, termasuk background-clip:text dari
+     aturan dasar, sehingga gradiennya tercetak sebagai balok dan hurufnya lenyap
+     (text-fill-color tetap transparan). */
   body.light .header h1{
-    background:linear-gradient(135deg,#0F172A 0%,var(--green) 65%,var(--blue) 100%);
+    background-image:linear-gradient(135deg,#0F172A 0%,var(--green) 65%,var(--blue) 100%);
+  }
+  /* Judul layar login & setup memakai gradien putih->hijau dengan masalah sama. */
+  body.light .auth-card h2, body.light .setup-card h2{
+    background-image:linear-gradient(135deg,#0F172A,var(--green));
   }
   body.light .bg-grid {
     background-image:
@@ -1008,7 +1016,7 @@ import {
 
 // Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
 // perangkat masih menjalankan versi lama dari cache service worker.
-const APP_BUILD = '2026-08-31-g';
+const APP_BUILD = '2026-08-31-h';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
