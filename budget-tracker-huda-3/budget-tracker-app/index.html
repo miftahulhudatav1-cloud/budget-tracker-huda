@@ -1126,7 +1126,7 @@ import {
 
 // Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
 // perangkat masih menjalankan versi lama dari cache service worker.
-const APP_BUILD = '2026-09-01-h';
+const APP_BUILD = '2026-09-01-i';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
@@ -1931,6 +1931,23 @@ window.addEntry = async function(type) {
 // yang menempel padanya.
 let editing = null;   // { type, id, month, year, receiptId }
 
+// Tanggal di modal edit bebas diubah, termasuk ke bulan lain. Karena bulan
+// sebuah entri ditentukan oleh field periode/year/month (bukan oleh isi
+// date-nya), mengubah tanggal saja membuat entri itu TETAP terdaftar di bulan
+// lamanya sambil menampilkan tanggal bulan baru — uangnya masuk ke bulan yang
+// salah dan total bulanannya keliru.
+//
+// Murni supaya bisa diuji. Mengembalikan indeks bulan, bukan namanya, agar
+// tidak bergantung pada MONTHS.
+function periodeDariTanggal(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso ?? ''));
+  if (!m) return null;
+  const tahun = Number(m[1]), bulan = Number(m[2]), hari = Number(m[3]);
+  if (bulan < 1 || bulan > 12 || hari < 1 || hari > 31) return null;
+  if (tahun < 2000 || tahun > 2100) return null;
+  return { year: tahun, monthIdx: bulan - 1 };
+}
+
 // Opsi dropdown di modal disalin dari form utama agar keduanya tidak bisa
 // berbeda diam-diam bila daftar kategori/jenis/metode diubah suatu saat.
 function salinOpsi(dariId, keId) {
@@ -1999,16 +2016,43 @@ window.saveEdit = async function() {
   try {
     const uid = uidAtau('Sesi belum siap — muat ulang halaman lalu coba lagi.');
     if(!uid) throw new Error('Sesi tidak aktif.');
-    // updateDoc, bukan setDoc: field lain seperti createdAt dan receiptId harus
-    // tetap utuh. Menulis ulang seluruh dokumen akan menghapus tautan ke foto struk.
-    // Field periode/year/month/flow tidak diubah: entri tetap di bulannya. Bila
-    // kelak tanggal boleh memindah entri antar bulan, keempatnya harus ikut
-    // diperbarui — kalau tidak, entrinya hilang dari tampilan.
-    await updateDoc(sudahMigrasi()
-      ? doc(txCol(uid), editing.id)
-      : doc(oldCol(uid, editing.year, editing.month, editing.type), editing.id), data);
+
+    // Tanggal boleh diubah ke bulan lain, jadi entrinya harus benar-benar
+    // berpindah. Tanpa ini uang masuk ke bulan yang salah tanpa satu pun tanda.
+    const tujuanBaru = periodeDariTanggal(data.date);
+    const pindah = tujuanBaru &&
+      (tujuanBaru.year !== editing.year || MONTHS[tujuanBaru.monthIdx] !== editing.month);
+
+    if (!pindah) {
+      // updateDoc, bukan setDoc: field lain seperti createdAt dan receiptId harus
+      // tetap utuh. Menulis ulang seluruh dokumen akan menghapus tautan ke foto struk.
+      await updateDoc(sudahMigrasi()
+        ? doc(txCol(uid), editing.id)
+        : doc(oldCol(uid, editing.year, editing.month, editing.type), editing.id), data);
+    } else if (sudahMigrasi()) {
+      // Model baru: bulan hanyalah beberapa field, jadi perpindahannya satu
+      // tulisan tunggal. Tidak ada saat di mana entri ini bisa hilang.
+      await updateDoc(doc(txCol(uid), editing.id),
+        bungkusTx(data, tujuanBaru.year, MONTHS[tujuanBaru.monthIdx], editing.type));
+    } else {
+      // Model lama: bulan adalah koleksinya sendiri, jadi dokumennya harus
+      // disalin lalu yang lama dihapus. Urutannya penting — SALIN DULU. Kalau
+      // penghapusan gagal, yang tersisa hanyalah entri ganda yang bisa dihapus
+      // sendiri; kalau urutannya dibalik, kegagalan berarti entri itu lenyap.
+      const lama = cache[editing.year]?.[editing.month]?.[editing.type]
+        ?.find(x => x.id === editing.id) || {};
+      const bawaan = {};
+      if (lama.receiptId) bawaan.receiptId = lama.receiptId;   // tautan foto struk ikut pindah
+      await addDoc(
+        oldCol(uid, tujuanBaru.year, MONTHS[tujuanBaru.monthIdx], editing.type),
+        { ...data, ...bawaan, createdAt: serverTimestamp() });
+      await deleteDoc(doc(oldCol(uid, editing.year, editing.month, editing.type), editing.id));
+    }
+
     closeEditModal();
-    showToast('Perubahan tersimpan', 'success');
+    showToast(pindah
+      ? `Perubahan tersimpan — dipindahkan ke ${MONTHS[tujuanBaru.monthIdx]} ${tujuanBaru.year}`
+      : 'Perubahan tersimpan', 'success');
   } catch (e) {
     errEl.textContent = 'Gagal menyimpan: ' + e.message;
     errEl.style.display = 'block';
