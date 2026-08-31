@@ -386,6 +386,17 @@
   .insight-toggle-bar:hover { border-color:rgba(79,195,247,0.4); color:var(--blue); }
   #insightChevron { font-size:10px; transition:transform 0.3s ease; }
 
+  #cfgPaste{width:100%;font-family:var(--mono);font-size:11px;line-height:1.6;
+    background:var(--surface2);color:var(--text);border:1px solid var(--border);
+    border-radius:10px;padding:10px 12px;outline:none;resize:vertical;}
+  #cfgPaste:focus{border-color:var(--green);box-shadow:0 0 0 3px var(--green-glow);}
+  .setup-paste-btn{width:100%;font-family:var(--sans);font-size:12px;font-weight:700;
+    padding:9px;margin-top:8px;border-radius:9px;cursor:pointer;
+    background:var(--green-dim);border:1px solid rgba(0,214,143,0.4);color:var(--green);
+    transition:all 0.2s;}
+  .setup-paste-btn:hover{filter:brightness(1.15);}
+  .setup-paste-hint{font-size:10.5px;color:var(--text-muted);margin-top:6px;line-height:1.5;}
+
   .insight-wrap { display:flex; flex-direction:column; gap:8px; }
   /* status-bar sekarang berada di dalam panel insight: samakan jaraknya dengan
      jarak antar kartu. Distyle lewat selector turunan, bukan class tambahan,
@@ -588,20 +599,28 @@
     </div>
 
     <div class="setup-input-group">
+      <label>Tempel Config Sekaligus (disarankan)</label>
+      <textarea id="cfgPaste" rows="3" autocomplete="off" autocorrect="off" spellcheck="false"
+        placeholder='Tempel seluruh blok dari Firebase Console:&#10;const firebaseConfig = { apiKey: "...", ... };'></textarea>
+      <button class="setup-paste-btn" onclick="tempelConfig()">Isi otomatis dari teks di atas</button>
+      <p class="setup-paste-hint">Menempel sekaligus menghindari salah ketik dan autofill yang mengembalikan nilai lama.</p>
+    </div>
+
+    <div class="setup-input-group">
       <label>API Key</label>
-      <input type="text" id="cfgApiKey" placeholder="AIzaSy...">
+      <input type="text" id="cfgApiKey" placeholder="AIzaSy..." autocomplete="off" autocorrect="off" spellcheck="false">
     </div>
     <div class="setup-input-group">
       <label>Auth Domain</label>
-      <input type="text" id="cfgAuthDomain" placeholder="budget-huda.firebaseapp.com">
+      <input type="text" id="cfgAuthDomain" placeholder="budget-huda.firebaseapp.com" autocomplete="off" autocorrect="off" spellcheck="false">
     </div>
     <div class="setup-input-group">
       <label>Project ID</label>
-      <input type="text" id="cfgProjectId" placeholder="budget-huda">
+      <input type="text" id="cfgProjectId" placeholder="budget-huda" autocomplete="off" autocorrect="off" spellcheck="false">
     </div>
     <div class="setup-input-group">
       <label>App ID</label>
-      <input type="text" id="cfgAppId" placeholder="1:123456789:web:abc123">
+      <input type="text" id="cfgAppId" placeholder="1:123456789:web:abc123" autocomplete="off" autocorrect="off" spellcheck="false">
     </div>
 
     <button class="setup-btn" onclick="saveConfig()">Simpan & Mulai →</button>
@@ -947,7 +966,7 @@ import {
 
 // Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
 // perangkat masih menjalankan versi lama dari cache service worker.
-const APP_BUILD = '2026-08-31-b';
+const APP_BUILD = '2026-08-31-c';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
@@ -977,13 +996,69 @@ function getConfig() {
   try { return JSON.parse(localStorage.getItem('fbConfig')); } catch { return null; }
 }
 
-window.saveConfig = function() {
-  const cfg = {
-    apiKey:      document.getElementById('cfgApiKey').value.trim(),
-    authDomain:  document.getElementById('cfgAuthDomain').value.trim(),
-    projectId:   document.getElementById('cfgProjectId').value.trim(),
-    appId:       document.getElementById('cfgAppId').value.trim(),
+// Mengetik empat nilai di HP rawan: autofill mengembalikan nilai lama, dan orang
+// ikut menyalin "https://" ke authDomain. Dibersihkan di satu tempat.
+function bersihkanConfig(c) {
+  const bersih = s => String(s || '').trim().replace(/^["'\s]+|["',\s]+$/g, '');
+  return {
+    apiKey:     bersih(c.apiKey),
+    authDomain: bersih(c.authDomain).replace(/^https?:\/\//i, '').replace(/\/.*$/, ''),
+    projectId:  bersih(c.projectId),
+    appId:      bersih(c.appId),
   };
+}
+
+// Menerima potongan config apa adanya dari Firebase Console — baik berupa JSON
+// maupun blok `const firebaseConfig = { ... }` — supaya tidak ada yang diketik.
+window.tempelConfig = function() {
+  const teks = document.getElementById('cfgPaste').value;
+  if (!teks.trim()) { showToast('Tempel dulu config-nya.', 'error'); return; }
+  const ambil = kunci => {
+    const m = teks.match(new RegExp('["\']?' + kunci + '["\']?\\s*:\\s*["\']([^"\']+)["\']'));
+    return m ? m[1] : '';
+  };
+  const c = bersihkanConfig({
+    apiKey: ambil('apiKey'), authDomain: ambil('authDomain'),
+    projectId: ambil('projectId'), appId: ambil('appId'),
+  });
+  const kosong = Object.entries(c).filter(([, v]) => !v).map(([k]) => k);
+  if (kosong.length) { showToast('Tidak ketemu: ' + kosong.join(', '), 'error'); return; }
+  document.getElementById('cfgApiKey').value     = c.apiKey;
+  document.getElementById('cfgAuthDomain').value = c.authDomain;
+  document.getElementById('cfgProjectId').value  = c.projectId;
+  document.getElementById('cfgAppId').value      = c.appId;
+  showToast('Keempat nilai terisi. Periksa lalu Simpan.', 'success');
+};
+
+// Setup sekali tap lewat tautan: #cfg=<base64 JSON>. Config Firebase memang bukan
+// rahasia (selalu terlihat di halaman web mana pun yang memakainya), jadi aman
+// dikirim ke perangkat sendiri lewat chat — dan ini menghapus seluruh peluang
+// salah ketik yang selama ini jadi sumber masalah.
+function terapkanConfigDariURL() {
+  const m = location.hash.match(/[#&]cfg=([^&]+)/);
+  if (!m) return false;
+  try {
+    const json = decodeURIComponent(escape(atob(m[1].replace(/-/g, '+').replace(/_/g, '/'))));
+    const c = bersihkanConfig(JSON.parse(json));
+    if (!c.apiKey || !c.authDomain || !c.projectId || !c.appId) return false;
+    if (!confirm(`Pasang konfigurasi Firebase untuk project "${c.projectId}"?\n\nKonfigurasi yang ada sekarang akan diganti.`)) return false;
+    localStorage.setItem('fbConfig', JSON.stringify(c));
+    // Hash dibuang agar tidak tertinggal di riwayat dan tidak terpasang ulang.
+    history.replaceState(null, '', location.pathname + location.search);
+    return true;
+  } catch (e) {
+    console.error('Config dari tautan tidak valid:', e);
+    return false;
+  }
+}
+
+window.saveConfig = function() {
+  const cfg = bersihkanConfig({
+    apiKey:      document.getElementById('cfgApiKey').value,
+    authDomain:  document.getElementById('cfgAuthDomain').value,
+    projectId:   document.getElementById('cfgProjectId').value,
+    appId:       document.getElementById('cfgAppId').value,
+  });
   // storageBucket & messagingSenderId sengaja tidak diisi: app ini hanya memakai
   // Auth + Firestore. Menebak nilainya justru menghasilkan config yang salah.
   if(!cfg.apiKey || !cfg.authDomain || !cfg.projectId || !cfg.appId) {
@@ -1243,7 +1318,10 @@ window.runDiagnostics = async function() {
   tulis('projectId  : ' + (cfg.projectId || '(kosong)'));
   tulis('authDomain : ' + (cfg.authDomain || '(kosong)'));
   tulis('apiKey     : ' + (cfg.apiKey ? cfg.apiKey.slice(0, 12) + '…' : '(kosong)'));
-  const labelDomain = (cfg.authDomain || '').split('.')[0];
+  // Dibersihkan dulu dari protokol/jalur, kalau tidak "https://" ikut terbaca
+  // sebagai bagian nama project dan peringatannya jadi menyesatkan.
+  const labelDomain = (cfg.authDomain || '')
+    .replace(/^https?:\/\//i, '').replace(/\/.*$/, '').split('.')[0];
   if (labelDomain && labelDomain !== cfg.projectId) {
     tulis('>>> MASALAH: authDomain milik project "' + labelDomain +
           '" tapi projectId "' + cfg.projectId + '" — dari dua project berbeda.');
@@ -3126,6 +3204,7 @@ if ('serviceWorker' in navigator) {
 }
 
 // ── BOOT ───────────────────────────────────────
+terapkanConfigDariURL();   // #cfg=... memasang config tanpa mengetik apa pun
 const saved = getConfig();
 if(saved) { startApp(saved); }
 // else setup screen is already visible
