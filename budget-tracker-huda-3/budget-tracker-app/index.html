@@ -56,6 +56,7 @@
   .recurring-form .span2{grid-column:span 2;}
   @media(max-width:580px){.recurring-form .span2{grid-column:span 1;}}
   .recurring-list{display:flex;flex-direction:column;gap:8px;}
+  .recurring-status{font-size:10.5px;color:var(--text-muted);margin-top:3px;}
   .recurring-item{display:flex;align-items:center;gap:12px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;}
   .recurring-item.in-item{border-left:3px solid var(--green);}
   .recurring-item.out-item{border-left:3px solid var(--red);}
@@ -1061,7 +1062,7 @@ import {
 
 // Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
 // perangkat masih menjalankan versi lama dari cache service worker.
-const APP_BUILD = '2026-08-31-t';
+const APP_BUILD = '2026-08-31-u';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
@@ -1274,7 +1275,9 @@ function buildUI() {
   if(currentUser?.uid) {
     // Migrasi berjalan di latar. Selama belum tuntas & terverifikasi, seluruh
     // baca/tulis tetap di koleksi lama, jadi tampilan tidak pernah kosong.
-    initSettings(currentUser.uid).then(() => migrasiKeTransactions(currentUser.uid));
+    initSettings(currentUser.uid)
+      .then(() => migrasiKeTransactions(currentUser.uid))
+      .then(() => terapkanRutinJatuhTempo());
   }
 }
 
@@ -2466,6 +2469,83 @@ window.deleteRecurring = function(id) {
   showToast('Dihapus','error');
 };
 
+// ── OTOMATIS SAAT JATUH TEMPO ──────────────────
+// Aplikasi ini berjalan sepenuhnya di perangkat, tanpa server maupun penjadwal.
+// Jadi "otomatis" di sini berarti: DIPERIKSA SETIAP APLIKASI DIBUKA. Kalau
+// aplikasinya tidak pernah dibuka, tidak ada yang dibuat — tidak ada cara lain
+// tanpa backend.
+//
+// Sengaja hanya menangani BULAN BERJALAN. Kalau pengguna tidak membuka aplikasi
+// selama tiga bulan, membuat mundur tiga bulan transaksi sekaligus akan
+// mengejutkan dan besar kemungkinan salah. Bulan yang terlewat tetap bisa diisi
+// lewat tombol Terapkan.
+function kunciBulan(d = new Date()) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+// Tanggal 31 pada bulan yang hanya punya 30 hari dijepit ke hari terakhir,
+// kalau tidak tagihan tanggal 31 tidak akan pernah jatuh tempo di bulan pendek.
+function tanggalJatuhTempo(day, d = new Date()) {
+  const akhirBulan = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  const hari = Math.min(Math.max(parseInt(day, 10) || 1, 1), akhirBulan);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(hari).padStart(2, '0')}`;
+}
+
+function rutinJatuhTempo(list, d = new Date()) {
+  const bulanIni = kunciBulan(d);
+  const akhirBulan = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  return list.filter(r => {
+    if (r.terakhir === bulanIni) return false;              // sudah dibuat bulan ini
+    const hari = Math.min(Math.max(parseInt(r.day, 10) || 1, 1), akhirBulan);
+    return d.getDate() >= hari;                              // tanggalnya sudah lewat
+  });
+}
+
+let rutinSudahDicek = false;
+async function terapkanRutinJatuhTempo() {
+  if (rutinSudahDicek) return;
+  const uid = currentUser?.uid;
+  if (!uid || !db) return;
+  rutinSudahDicek = true;
+
+  const sekarang = new Date();
+  const jatuhTempo = rutinJatuhTempo(getRecurring(), sekarang);
+  if (!jatuhTempo.length) return;
+
+  // Hanya berlaku bila bulan yang sedang dibuka memang bulan berjalan; kalau
+  // pengguna sedang melihat bulan lain, entrinya akan mendarat di tempat salah.
+  if (currentYear !== sekarang.getFullYear() || currentMonth !== sekarang.getMonth()) return;
+
+  const month = MONTHS[sekarang.getMonth()];
+  const bulanIni = kunciBulan(sekarang);
+  let berhasil = 0;
+
+  for (const rec of jatuhTempo) {
+    const data = {
+      date: tanggalJatuhTempo(rec.day, sekarang),
+      desc: rec.name, amount: rec.amount, cat: rec.cat, type: '', note: rec.note || ''
+    };
+    try {
+      await addDoc(sudahMigrasi() ? txCol(uid) : oldCol(uid, currentYear, month, rec.type), {
+        ...(sudahMigrasi() ? bungkusTx(data, currentYear, month, rec.type) : data),
+        createdAt: serverTimestamp()
+      });
+      berhasil++;
+    } catch (e) {
+      console.error(`Rutin "${rec.name}" gagal dibuat:`, e);
+    }
+  }
+
+  if (berhasil) {
+    // Penanda disimpan hanya untuk yang benar-benar berhasil, jadi yang gagal
+    // akan dicoba lagi saat aplikasi dibuka berikutnya.
+    const idBerhasil = new Set(jatuhTempo.slice(0, berhasil).map(r => r.id));
+    saveRecurring(getRecurring().map(r =>
+      idBerhasil.has(r.id) ? { ...r, terakhir: bulanIni } : r));
+    showToast(`${berhasil} transaksi rutin otomatis ditambahkan untuk ${month}.`, 'success');
+  }
+}
+
 window.applyRecurring = async function(id) {
   const rec = getRecurring().find(r=>r.id===id);
   if(!rec) return;
@@ -2486,6 +2566,11 @@ window.applyRecurring = async function(id) {
       ...(sudahMigrasi() ? bungkusTx(data, currentYear, month, rec.type) : data),
       createdAt: serverTimestamp()
     });
+    // Ditandai juga di sini: tanpa ini, penerapan manual akan diulang lagi
+    // oleh pemeriksaan otomatis saat aplikasi dibuka berikutnya.
+    if (currentYear === new Date().getFullYear() && currentMonth === new Date().getMonth()) {
+      saveRecurring(getRecurring().map(r => r.id === rec.id ? { ...r, terakhir: kunciBulan() } : r));
+    }
     showToast(`"${rec.name}" diterapkan ke ${month}`,'success');
   } catch(e) {
     cache[currentYear][month][rec.type] = cache[currentYear][month][rec.type].filter(x=>x.id!==tempId);
@@ -2501,6 +2586,20 @@ window.applyAllRecurring = async function() {
   showToast(`${list.length} transaksi diterapkan`,'success');
 };
 
+// Status per item — tanpa ini pengguna tidak punya cara tahu apakah yang
+// otomatis sudah berjalan bulan ini atau masih menunggu tanggalnya.
+function statusRutin(r) {
+  const sekarang = new Date();
+  const bulanIni = kunciBulan(sekarang);
+  const namaBulan = MONTHS[sekarang.getMonth()];
+  if (r.terakhir === bulanIni) return `Sudah ditambahkan untuk ${namaBulan}`;
+  const akhirBulan = new Date(sekarang.getFullYear(), sekarang.getMonth() + 1, 0).getDate();
+  const hari = Math.min(Math.max(parseInt(r.day, 10) || 1, 1), akhirBulan);
+  return sekarang.getDate() >= hari
+    ? 'Jatuh tempo — akan ditambahkan otomatis'
+    : `Menunggu tanggal ${hari} ${namaBulan}`;
+}
+
 function renderRecurringList() {
   const el = document.getElementById('recurringList');
   if(!el) return;
@@ -2514,6 +2613,7 @@ function renderRecurringList() {
       <div class="recurring-info">
         <div class="recurring-name">${esc(r.name)}</div>
         <div class="recurring-meta">Setiap tgl ${esc(r.day)} · ${esc(r.cat)||'—'} · ${r.type==='in'?'Pemasukan':'Pengeluaran'}</div>
+        <div class="recurring-status">${statusRutin(r)}</div>
       </div>
       <span class="recurring-amount ${r.type}">${fmt(r.amount)}</span>
       <button class="recurring-apply" onclick="applyRecurring(${r.id})">▶ Terapkan</button>
@@ -3727,6 +3827,7 @@ window.logoutUser = async function() {
   if(unsubSettings) { unsubSettings(); unsubSettings = null; }
   settingsCache = { recurring: [], budgetLimits: {}, migratedV2: false };
   bacaDariModelBaru = false;
+  rutinSudahDicek = false;
   if(unsubIn) unsubIn();
   if(unsubOut) unsubOut();
   document.getElementById('mainApp').style.display = 'none';
