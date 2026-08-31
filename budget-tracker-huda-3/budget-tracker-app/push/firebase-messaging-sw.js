@@ -3,6 +3,12 @@
 // Terpisah dari sw.js — Firebase Messaging menuntut worker-nya sendiri, dan
 // mencampurnya dengan cache aplikasi hanya membuat keduanya sulit ditelusuri.
 //
+// Diletakkan di subfolder push/ dengan sengaja. Dua service worker tidak bisa
+// menguasai scope yang sama: didaftarkan di akar, ia akan MENGGANTIKAN sw.js
+// dan mematikan cache offline serta pemasangan PWA. Dari sini scope-nya
+// otomatis ./push/, terpisah rapi. Push tetap sampai — pengiriman tidak
+// bergantung pada scope.
+//
 // Config-nya dikirim lewat query string saat didaftarkan, BUKAN ditulis di sini:
 // tiap pengguna memakai project Firebase-nya sendiri, dan service worker tidak
 // bisa membaca localStorage tempat config itu tersimpan. Menuliskan satu config
@@ -30,8 +36,8 @@ if (cfg.apiKey && cfg.projectId && cfg.messagingSenderId) {
     const d = payload.data || {};
     self.registration.showNotification(d.title || 'Budget Tracker', {
       body: d.body || 'Kamu belum mencatat budget kamu hari ini.',
-      icon: './icon-192.png',
-      badge: './icon-192.png',
+      icon: '../icon-192.png',
+      badge: '../icon-192.png',
       tag: 'pengingat-harian',   // menimpa pengingat sebelumnya, tidak menumpuk
       data: { url: d.url || './' },
     });
@@ -42,7 +48,7 @@ if (cfg.apiKey && cfg.projectId && cfg.messagingSenderId) {
 // Kalau tabnya sudah terbuka, difokuskan saja daripada membuka tab kedua.
 self.addEventListener('notificationclick', e => {
   e.notification.close();
-  const tujuan = new URL(e.notification.data?.url || './', self.location).href;
+  const tujuan = new URL(e.notification.data?.url || '../', self.location).href;
   e.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then(daftar => {
       for (const c of daftar) {

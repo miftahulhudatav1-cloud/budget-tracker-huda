@@ -1090,7 +1090,7 @@ import {
 
 // Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
 // perangkat masih menjalankan versi lama dari cache service worker.
-const APP_BUILD = '2026-08-31-y';
+const APP_BUILD = '2026-08-31-z';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
@@ -1499,6 +1499,17 @@ window.runDiagnostics = async function() {
     tulis('>>> MASALAH: authDomain milik project "' + labelDomain +
           '" tapi projectId "' + cfg.projectId + '" — dari dua project berbeda.');
   }
+
+  tulis('\n── NOTIFIKASI ──');
+  tulis('messagingSenderId : ' + (cfg.messagingSenderId || '(kosong — wajib untuk push)'));
+  tulis('izin browser      : ' + (typeof Notification !== 'undefined' ? Notification.permission : '(tidak didukung)'));
+  tulis('token tersimpan   : ' + (settingsCache.fcmToken ? 'ada' : 'belum'));
+  try {
+    const regs = await navigator.serviceWorker.getRegistrations();
+    tulis('service worker    : ' + (regs.length
+      ? regs.map(r => new URL(r.scope).pathname).join(', ')
+      : '(belum ada)'));
+  } catch (e) { tulis('service worker    : gagal dibaca'); }
 
   tulis('\n── SESI ──');
   const u = auth?.currentUser;
@@ -2539,7 +2550,13 @@ async function daftarkanPush(vapidKey) {
     ) || '').replace(/\D/g, '');
     if (!sid) throw new Error('Messaging Sender ID dibutuhkan untuk notifikasi.');
     localStorage.setItem('fbConfig', JSON.stringify({ ...cfg, messagingSenderId: sid }));
-    cfg.messagingSenderId = sid;
+    // initializeApp sudah berjalan saat halaman dimuat, memakai config lama.
+    // Menyimpan nilai baru tidak mengubah instance yang terlanjur hidup, dan
+    // getMessaging() membaca dari instance itu — jadi tanpa memuat ulang,
+    // errornya akan persis sama seperti sebelum nilainya diisi.
+    alert('Sender ID tersimpan. Halaman akan dimuat ulang, lalu buka menu ⋯ → Notifikasi Pengingat sekali lagi.');
+    location.reload();
+    return null;
   }
 
   const { getMessaging, getToken, isSupported } =
@@ -2557,7 +2574,9 @@ async function daftarkanPush(vapidKey) {
     apiKey: cfg.apiKey, authDomain: cfg.authDomain, projectId: cfg.projectId,
     appId: cfg.appId, messagingSenderId: cfg.messagingSenderId || '',
   });
-  const reg = await navigator.serviceWorker.register(`firebase-messaging-sw.js?${q}`);
+  // scope ./push/ — didaftarkan di akar, worker ini akan menggantikan sw.js
+  // dan mematikan cache offline serta pemasangan PWA.
+  const reg = await navigator.serviceWorker.register(`push/firebase-messaging-sw.js?${q}`, { scope: './push/' });
 
   messagingSiap = messagingSiap || getMessaging();
   const token = await getToken(messagingSiap, {

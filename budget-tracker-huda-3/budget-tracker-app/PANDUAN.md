@@ -11,7 +11,7 @@ Datanya disimpan di Firebase (gratis) sehingga bisa dibuka dari HP dan laptop de
 | `manifest.json` | Metadata agar bisa di-install ke HP seperti aplikasi biasa |
 | `sw.js` | Service worker (butuh HTTPS, tidak aktif saat dibuka dari file lokal) |
 | `vercel.json` | Mengatur `Content-Type` manifest saat di-deploy ke Vercel |
-| `firebase-messaging-sw.js` | Penerima notifikasi latar (lihat Notifikasi Pengingat) |
+| `push/` | Penerima notifikasi latar — scope terpisah agar tidak menggantikan `sw.js` |
 | `scripts/` | Pengirim pengingat harian, dijalankan GitHub Actions |
 | `tests/` | Tes tanpa dependensi — lihat `tests/README.md` |
 | `PANDUAN.md` | File ini |
