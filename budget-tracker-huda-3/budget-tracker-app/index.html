@@ -774,6 +774,8 @@
           <button onclick="tutupMenu();exportToPDF()">Export PDF</button>
           <button onclick="tutupMenu();openBackupModal()">Backup &amp; Restore</button>
           <div class="menu-sep"></div>
+          <button onclick="tutupMenu();aturNotifikasi()" id="menuNotif">Notifikasi Pengingat</button>
+          <div class="menu-sep"></div>
           <button onclick="tutupMenu();runDiagnostics()">Diagnosa Koneksi</button>
           <button onclick="tutupMenu();resetConfig()">Ganti Firebase</button>
           <button class="menu-danger" onclick="tutupMenu();logoutUser()">Keluar</button>
@@ -1084,7 +1086,7 @@ import {
 
 // Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
 // perangkat masih menjalankan versi lama dari cache service worker.
-const APP_BUILD = '2026-08-31-w';
+const APP_BUILD = '2026-08-31-x';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
@@ -2392,7 +2394,7 @@ function highlight(text) {
 // dengan penulisan langsung ke Firestore.
 
 let bacaDariModelBaru = false;
-let settingsCache = { recurring: [], budgetLimits: {}, migratedV2: false };
+let settingsCache = { recurring: [], budgetLimits: {}, migratedV2: false, fcmToken: '', fcmVapid: '', tz: '' };
 let unsubSettings = null;
 
 function settingsRef(uid) { return doc(db, `users/${uid}/settings`, 'app'); }
@@ -2420,7 +2422,10 @@ async function initSettings(uid) {
     settingsCache = {
       recurring:    Array.isArray(d.recurring) ? d.recurring : [],
       budgetLimits: (d.budgetLimits && typeof d.budgetLimits === 'object') ? d.budgetLimits : {},
-      migratedV2:   d.migratedV2 === true
+      migratedV2:   d.migratedV2 === true,
+      fcmToken:     d.fcmToken || '',
+      fcmVapid:     d.fcmVapid || '',
+      tz:           d.tz || ''
     };
     // Begitu bendera berubah dari false ke true, listener harus dipasang ulang
     // agar berpindah ke koleksi baru. Selama masih false, semuanya tetap di
@@ -2492,6 +2497,81 @@ window.deleteRecurring = function(id) {
   saveRecurring(getRecurring().filter(r=>r.id!==id));
   renderRecurringList();
   showToast('Dihapus','error');
+};
+
+// ── NOTIFIKASI PUSH ────────────────────────────
+// Banner di dalam aplikasi hanya terlihat kalau aplikasinya dibuka — padahal
+// yang perlu diingatkan justru orang yang tidak membukanya. Untuk menjangkau
+// perangkat yang aplikasinya tertutup, notifikasinya harus dikirim dari luar:
+// GitHub Actions menjalankan cron harian, memeriksa siapa yang belum mencatat,
+// lalu mengirim lewat Firebase Cloud Messaging. Bagian di bawah ini hanya
+// mendaftarkan perangkat agar bisa dijangkau.
+//
+// VAPID key diambil dari Firebase Console → Project settings → Cloud Messaging →
+// Web Push certificates, lalu disimpan bersama config.
+let messagingSiap = null;
+
+async function daftarkanPush(vapidKey) {
+  const cfg = getConfig();
+  const uid = currentUser?.uid;
+  if (!cfg || !uid || !vapidKey) return null;
+
+  const { getMessaging, getToken, isSupported } =
+    await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging.js');
+
+  // iOS baru mendukung push untuk PWA yang dipasang ke homescreen, dan sebagian
+  // browser tidak mendukung sama sekali. Ditanyakan dulu daripada melempar error.
+  if (!(await isSupported())) throw new Error('Browser ini belum mendukung notifikasi push.');
+
+  const izin = await Notification.requestPermission();
+  if (izin !== 'granted') throw new Error('Izin notifikasi ditolak.');
+
+  // Config dititipkan lewat query string — lihat catatan di firebase-messaging-sw.js.
+  const q = new URLSearchParams({
+    apiKey: cfg.apiKey, authDomain: cfg.authDomain, projectId: cfg.projectId,
+    appId: cfg.appId, messagingSenderId: cfg.messagingSenderId || '',
+  });
+  const reg = await navigator.serviceWorker.register(`firebase-messaging-sw.js?${q}`);
+
+  messagingSiap = messagingSiap || getMessaging();
+  const token = await getToken(messagingSiap, {
+    vapidKey, serviceWorkerRegistration: reg,
+  });
+  if (!token) throw new Error('Token notifikasi tidak terbit.');
+
+  // Disimpan di dokumen pengaturan yang sudah ada, jadi security rules tidak
+  // perlu diubah — jalurnya tetap di bawah users/{uid}.
+  simpanSettings({
+    fcmToken: token,
+    fcmVapid: vapidKey,
+    // Zona waktu perangkat ikut disimpan supaya pengirim tahu kapan "hari ini"
+    // berakhir bagi orang ini, alih-alih menganggap semua orang di UTC.
+    tz: Intl.DateTimeFormat().resolvedOptions().timeZone || '',
+  });
+  return token;
+}
+
+window.aturNotifikasi = async function() {
+  if (settingsCache.fcmToken) {
+    if (!confirm('Notifikasi sudah aktif di perangkat ini. Matikan?')) return;
+    simpanSettings({ fcmToken: '' });
+    showToast('Notifikasi dimatikan untuk perangkat ini.', 'success');
+    return;
+  }
+
+  const kunci = (settingsCache.fcmVapid || '').trim() || (prompt(
+    'Tempel VAPID key dari Firebase Console:\n' +
+    'Project settings → Cloud Messaging → Web Push certificates → Key pair'
+  ) || '').trim();
+  if (!kunci) return;
+
+  try {
+    await daftarkanPush(kunci);
+    showToast('Notifikasi aktif. Pengingat dikirim tiap malam bila belum mencatat.', 'success');
+  } catch (e) {
+    console.error('Pendaftaran push gagal:', e);
+    showToast('Gagal mengaktifkan notifikasi: ' + e.message, 'error');
+  }
 };
 
 // ── PENGINGAT HARIAN ───────────────────────────
@@ -3981,7 +4061,7 @@ window.logoutUser = async function() {
   // Pengaturan juga milik akun: lepas listener dan kosongkan, agar akun berikutnya
   // yang login di perangkat ini tidak melihat transaksi rutin milik akun sebelumnya.
   if(unsubSettings) { unsubSettings(); unsubSettings = null; }
-  settingsCache = { recurring: [], budgetLimits: {}, migratedV2: false };
+  settingsCache = { recurring: [], budgetLimits: {}, migratedV2: false, fcmToken: '', fcmVapid: '', tz: '' };
   bacaDariModelBaru = false;
   rutinSudahDicek = false;
   if(unsubIn) unsubIn();

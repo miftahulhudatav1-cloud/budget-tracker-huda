@@ -11,6 +11,9 @@ Datanya disimpan di Firebase (gratis) sehingga bisa dibuka dari HP dan laptop de
 | `manifest.json` | Metadata agar bisa di-install ke HP seperti aplikasi biasa |
 | `sw.js` | Service worker (butuh HTTPS, tidak aktif saat dibuka dari file lokal) |
 | `vercel.json` | Mengatur `Content-Type` manifest saat di-deploy ke Vercel |
+| `firebase-messaging-sw.js` | Penerima notifikasi latar (lihat Notifikasi Pengingat) |
+| `scripts/` | Pengirim pengingat harian, dijalankan GitHub Actions |
+| `tests/` | Tes tanpa dependensi — lihat `tests/README.md` |
 | `PANDUAN.md` | File ini |
 
 ---
@@ -236,6 +239,75 @@ di daftar transaksi. Foto disimpan sebagai dokumen Firestore biasa (bukan
 Firebase Storage) supaya tetap muat di paket gratis Spark, sehingga dikompres
 dulu di browser. Pembersihan berjalan saat aplikasi dibuka; foto juga langsung
 ikut terhapus bila transaksinya dihapus. Foto **tidak** ikut dalam file Backup.
+
+---
+
+## 🔔 Notifikasi Pengingat (opsional)
+
+Mengirim notifikasi ke HP tiap malam bila hari itu belum ada catatan — **juga
+saat aplikasi tidak dibuka**. Kalau tidak diaktifkan, aplikasi tetap berjalan
+normal; yang ada hanya banner pengingat saat aplikasi dibuka.
+
+> **Kenapa butuh langkah sebanyak ini?** Browser tidak bisa menjadwalkan
+> notifikasi untuk waktu mendatang saat aplikasinya tertutup — tidak ada API-nya.
+> Jadi pengirimnya harus hidup di luar perangkat. Yang dipakai di sini gratis
+> semua: GitHub Actions sebagai penjadwal, Firebase Cloud Messaging sebagai
+> pengirim (gratis bahkan di paket Spark).
+
+### 1. Ambil VAPID key
+
+Firebase Console → ⚙️ **Project settings** → tab **Cloud Messaging** → bagian
+**Web Push certificates** → **Generate key pair**. Salin nilainya.
+
+### 2. Aktifkan di aplikasi
+
+Menu **⋯** → **Notifikasi Pengingat** → tempel VAPID key → izinkan notifikasi
+saat browser bertanya.
+
+Ulangi di tiap perangkat yang ingin menerima notifikasi. Untuk mematikan, buka
+menu yang sama sekali lagi.
+
+> **iPhone:** push hanya bekerja bila aplikasinya sudah di-**Add to Home Screen**
+> dan dibuka dari ikon itu. Dari tab Safari biasa, iOS tidak mengizinkannya.
+
+### 3. Ambil service account key
+
+Firebase Console → ⚙️ **Project settings** → tab **Service accounts** →
+**Generate new private key** → tersimpan sebagai file `.json`.
+
+> ⚠️ **Kunci ini berbeda sifat dari config Firebase.** Config web memang publik
+> dan dibatasi security rules. Service account key **menembus semua rules** dan
+> membuka seluruh data semua pengguna. Jangan pernah menaruhnya di dalam repo,
+> mengirimnya lewat chat, atau menempelkannya ke `index.html`.
+
+### 4. Simpan sebagai secret GitHub
+
+Repo di GitHub → **Settings** → **Secrets and variables** → **Actions** →
+**New repository secret**
+
+- Name: `FIREBASE_SERVICE_ACCOUNT`
+- Secret: **seluruh isi** file `.json` tadi, apa adanya
+
+### 5. Uji tanpa menunggu
+
+Tab **Actions** → **Pengingat harian** → **Run workflow**. Log-nya menyebutkan
+berapa yang diperiksa, dikirim, dan dilewati.
+
+Setelah itu berjalan sendiri tiap hari pukul **20.00 WIB** (13:00 UTC). Untuk
+mengubah jamnya, sunting baris `cron` di
+`.github/workflows/pengingat-harian.yml` — nilainya selalu UTC.
+
+### Yang perlu diketahui
+
+- Jadwal GitHub Actions bisa **meleset beberapa menit hingga puluhan menit** saat
+  layanannya sibuk. Wajar untuk pengingat.
+- Workflow terjadwal **berhenti otomatis setelah 60 hari tanpa aktivitas** di
+  repo. Satu commit apa pun menghidupkannya lagi.
+- "Hari ini" dihitung memakai **zona waktu perangkat**, yang ikut tersimpan saat
+  notifikasi diaktifkan. Tanpa itu, memakai UTC berarti tujuh jam pertama tiap
+  hari di WIB dinilai sebagai hari kemarin.
+- Token yang mati (aplikasi dicopot, data situs dibersihkan) dibersihkan sendiri
+  saat pengiriman gagal, jadi tidak dicoba terus setiap hari.
 
 ---
 

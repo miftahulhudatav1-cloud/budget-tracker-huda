@@ -1,0 +1,10 @@
+{
+  "name": "budget-tracker-pengingat",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Pengirim pengingat harian. Berjalan di GitHub Actions, terpisah dari aplikasinya yang tetap statis tanpa dependensi.",
+  "dependencies": {
+    "firebase-admin": "^14.3.0"
+  }
+}

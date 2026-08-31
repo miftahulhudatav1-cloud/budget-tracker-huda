@@ -1,0 +1,36 @@
+name: Pengingat harian
+
+on:
+  schedule:
+    # 13:00 UTC = 20:00 WIB. Cron GitHub selalu UTC.
+    # Jadwalnya bisa meleset beberapa menit sampai puluhan menit saat GitHub
+    # sedang sibuk — wajar untuk pengingat, tidak cocok untuk yang presisi.
+    - cron: '0 13 * * *'
+  # Tombol jalankan manual, untuk menguji tanpa menunggu besok.
+  workflow_dispatch:
+
+jobs:
+  kirim:
+    runs-on: ubuntu-latest
+    # Tanpa batas ini, satu panggilan yang menggantung bisa memakai
+    # menit Actions berjam-jam sebelum dihentikan.
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Pasang dependensi
+        working-directory: budget-tracker-huda-3/budget-tracker-app/scripts
+        run: npm ci
+
+      - name: Kirim pengingat
+        working-directory: budget-tracker-huda-3/budget-tracker-app/scripts
+        env:
+          # Service account MENEMBUS security rules. Disimpan sebagai secret
+          # repo, tidak pernah masuk ke dalam repo itu sendiri.
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: node kirim-pengingat.mjs
