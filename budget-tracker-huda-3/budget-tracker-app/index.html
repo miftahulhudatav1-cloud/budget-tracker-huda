@@ -285,7 +285,15 @@
   #loadingScreen p{font-size:13px;color:var(--text-muted);}
 
   /* HEADER */
-  .header{text-align:center;padding:40px 0 32px;animation:fade-down 0.7s ease both;}
+  /* position+z-index WAJIB di sini. Animasi fade-down memakai transform dengan
+     fill-mode both, jadi transform-nya menetap setelah animasi selesai dan
+     .header menjadi stacking context tersendiri. Tanpa z-index, .month-nav —
+     yang juga ber-animation, jadi juga stacking context, dan letaknya lebih
+     belakang di DOM — akan tergambar DI ATAS menu ⋯, berapa pun z-index menunya,
+     karena z-index itu hanya berlaku di dalam konteks induknya.
+     Nilainya di bawah setupScreen (100) dan authScreen (101) agar layar-layar
+     itu tetap menutupi header. */
+  .header{text-align:center;padding:40px 0 32px;animation:fade-down 0.7s ease both;position:relative;z-index:60;}
   .header-badge{
     display:inline-flex;align-items:center;gap:8px;
     font-size:11px;font-weight:600;letter-spacing:0.12em;text-transform:uppercase;
@@ -1053,7 +1061,7 @@ import {
 
 // Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
 // perangkat masih menjalankan versi lama dari cache service worker.
-const APP_BUILD = '2026-08-31-p';
+const APP_BUILD = '2026-08-31-q';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
