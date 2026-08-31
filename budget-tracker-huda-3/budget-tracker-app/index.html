@@ -177,11 +177,22 @@
 
   /* LIGHT MODE */
   body.light {
-    --bg:#F0F4F8; --surface:#FFFFFF; --surface2:#F8FAFC; --border:rgba(0,0,0,0.08);
-    --text:#1E293B; --text-muted:#64748B; --text-dim:#94A3B8;
-    --green-dim:rgba(0,184,148,0.1); --green-glow:rgba(0,184,148,0.2);
-    --red-dim:rgba(225,112,85,0.1); --blue-dim:rgba(9,132,227,0.1);
-    --gold-dim:rgba(249,168,37,0.1); --purple-dim:rgba(108,92,231,0.1);
+    --bg:#F0F4F8; --surface:#FFFFFF; --surface2:#F8FAFC; --border:rgba(0,0,0,0.10);
+    --text:#0F172A; --text-muted:#556070; --text-dim:#475569;
+    /* Warna solid ini WAJIB ikut diganti. Sebelumnya hanya varian -dim yang
+       dioverride, sehingga --green, --gold, --blue tetap memakai nilai yang
+       dirancang untuk latar gelap — di atas putih kontrasnya cuma 1,8-2,0 : 1,
+       jauh di bawah ambang keterbacaan 4,5 : 1. Nilai di bawah ini semuanya
+       terukur >= 4,5 : 1 terhadap putih. */
+    --green:#007A50; --red:#C0392B; --gold:#9A5D06;
+    --blue:#0969DA;  --purple:#6D28D9;
+    --green-dim:rgba(0,122,80,0.10); --green-glow:rgba(0,122,80,0.20);
+    --red-dim:rgba(192,57,43,0.10); --blue-dim:rgba(9,105,218,0.10);
+    --gold-dim:rgba(154,93,6,0.10); --purple-dim:rgba(109,40,217,0.10);
+  }
+  /* Gradien judul dimulai dari putih — tidak terlihat sama sekali di latar terang. */
+  body.light .header h1{
+    background:linear-gradient(135deg,#0F172A 0%,var(--green) 65%,var(--blue) 100%);
   }
   body.light .bg-grid {
     background-image:
@@ -301,7 +312,19 @@
 
   /* SUMMARY CARDS */
   .summary-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:16px;animation:fade-up 0.6s 0.3s ease both;}
-  @media(max-width:580px){.summary-grid{grid-template-columns:1fr;}}
+  /* Di HP kartunya dulu jadi satu kolom penuh, sehingga tiga blok tinggi memenuhi
+     layar dan angkanya terasa berlebihan. Diubah jadi baris ringkas: label di
+     kiri, nominal di kanan — muat satu baris, jauh lebih sedikit menggulir. */
+  @media(max-width:580px){
+    .summary-grid{grid-template-columns:1fr;gap:8px;}
+    .summary-card{display:flex;align-items:center;justify-content:space-between;
+      gap:12px;padding:12px 16px;border-radius:12px;}
+    .summary-card .card-label{margin-bottom:0;flex:1;min-width:0;}
+    .summary-card .card-value{font-size:15px;white-space:nowrap;}
+    /* Garis aksen jadi batang tegak di kiri, bukan garis datar di atas —
+       sebagai flex item horizontal ia akan tergencet jadi tak terlihat. */
+    .summary-card .card-accent{width:3px;height:26px;margin-bottom:0;flex-shrink:0;}
+  }
   .summary-card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:18px;position:relative;overflow:hidden;transition:transform 0.2s,box-shadow 0.2s;}
   .summary-card:hover{transform:translateY(-3px);}
   .summary-card::before{content:'';position:absolute;inset:0;border-radius:16px;opacity:0;transition:opacity 0.3s;}
@@ -985,7 +1008,7 @@ import {
 
 // Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
 // perangkat masih menjalankan versi lama dari cache service worker.
-const APP_BUILD = '2026-08-31-f';
+const APP_BUILD = '2026-08-31-g';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
