@@ -1090,7 +1090,7 @@ import {
 
 // Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
 // perangkat masih menjalankan versi lama dari cache service worker.
-const APP_BUILD = '2026-09-01-c';
+const APP_BUILD = '2026-09-01-d';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
@@ -2951,6 +2951,67 @@ async function decodeImage(file) {
   }
 }
 
+// Mencari kotak struk di dalam foto lewat proyeksi baris & kolom.
+//
+// Struk adalah kertas terang di atas latar yang lebih gelap — meja, batu, lantai.
+// Latar itu ikut dibaca Tesseract dan menyumbang sampah di tiap baris, yang
+// terlihat jelas pada keluaran OCR sungguhan ("Spare Pase", "SAE", "AA").
+// Membuang latarnya sebelum OCR menghilangkan sumber sampah itu sekaligus
+// memperbesar porsi piksel yang benar-benar berisi teks.
+//
+// Fungsi murni agar bisa diuji tanpa canvas.
+function cariKotakStruk(abu, w, h) {
+  // Ambang di tengah antara persentil gelap dan terang; "terang" = kandidat kertas.
+  const hist = new Uint32Array(256);
+  for (let i = 0; i < abu.length; i++) hist[abu[i]]++;
+  let akum = 0, lo = 0, hi = 255;
+  for (let v = 0; v < 256; v++) { akum += hist[v]; if (akum >= abu.length * 0.10) { lo = v; break; } }
+  akum = 0;
+  for (let v = 255; v >= 0; v--) { akum += hist[v]; if (akum >= abu.length * 0.10) { hi = v; break; } }
+  if (hi - lo < 40) return null;            // gambar nyaris rata — tidak ada yang bisa dipisah
+  const ambang = lo + (hi - lo) * 0.55;
+
+  const barisTerang = new Uint32Array(h);
+  const kolomTerang = new Uint32Array(w);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (abu[y * w + x] > ambang) { barisTerang[y]++; kolomTerang[x]++; }
+    }
+  }
+
+  // Sebuah baris dianggap bagian struk bila sepertiga lebarnya terang. Ambang
+  // longgar dengan sengaja: baris berisi teks punya banyak piksel gelap.
+  const rentang = (proyeksi, panjang, lawan) => {
+    const batas = lawan / 3;
+    let a = 0, b = panjang - 1;
+    while (a < panjang && proyeksi[a] < batas) a++;
+    while (b > a && proyeksi[b] < batas) b--;
+    return [a, b];
+  };
+  const [y0, y1] = rentang(barisTerang, h, w);
+  const [x0, x1] = rentang(kolomTerang, w, h);
+  if (y1 <= y0 || x1 <= x0) return null;
+
+  const lebar = x1 - x0 + 1, tinggi = y1 - y0 + 1;
+  const porsi = (lebar * tinggi) / (w * h);
+  // Terlalu kecil berarti yang terdeteksi kemungkinan pantulan cahaya, bukan
+  // struk; terlalu besar berarti tidak ada latar untuk dibuang. Keduanya
+  // dibiarkan apa adanya — memotong keliru jauh lebih merugikan daripada tidak
+  // memotong sama sekali.
+  if (porsi < 0.20 || porsi > 0.92) return null;
+
+  // Margin kecil supaya huruf di tepi tidak terpotong. Lebarnya dihitung dari
+  // sisa ruang setelah x ditentukan, bukan dari lebar gambar — kalau tidak,
+  // kotak yang mentok di kiri akan melewati tepi kanan.
+  const marginX = Math.round(lebar * 0.02), marginY = Math.round(tinggi * 0.02);
+  const x = Math.max(0, x0 - marginX), y = Math.max(0, y0 - marginY);
+  return {
+    x, y,
+    w: Math.min(w - x, lebar + marginX * 2),
+    h: Math.min(h - y, tinggi + marginY * 2),
+  };
+}
+
 // Versi khusus OCR: lebih besar, abu-abu, dan kontrasnya diregangkan.
 //
 // Foto struk di HP hampir selalu kurang kontras — kertas keabu-abuan, tinta
@@ -2999,9 +3060,67 @@ async function siapkanUntukOCR(file) {
   for (let i = 0, j = 0; i < px.length; i += 4, j++) {
     const v = Math.max(0, Math.min(255, ((abu[j] - lo) * 255) / rentang));
     px[i] = px[i + 1] = px[i + 2] = v;
+    abu[j] = v;                     // dipakai lagi untuk mencari kotak struk
   }
   ctx.putImageData(img, 0, 0);
-  return canvas.toDataURL('image/png');   // PNG: tanpa artefak JPEG di tepi huruf
+
+  // Buang latar bila kotak struknya bisa dikenali. Pemotongan dilakukan setelah
+  // peregangan kontras, karena pemisahan kertas dari latar jauh lebih tegas
+  // setelahnya.
+  const kotak = cariKotakStruk(abu, w, h);
+  if (kotak) {
+    const potong = document.createElement('canvas');
+    potong.width = kotak.w; potong.height = kotak.h;
+    potong.getContext('2d').drawImage(canvas, kotak.x, kotak.y, kotak.w, kotak.h,
+                                              0, 0, kotak.w, kotak.h);
+    return { dataUrl: potong.toDataURL('image/png'), dipotong: true };
+  }
+  return { dataUrl: canvas.toDataURL('image/png'), dipotong: false };
+}
+
+// Varian hitam-putih tegas. Dipakai HANYA sebagai percobaan kedua ketika
+// pembacaan pertama gagal: pada cetakan pudar ia sering menghapus huruf, tapi
+// pada foto dengan cahaya tidak rata ia justru menyelamatkan yang gagal terbaca.
+// Satu cara pra-proses tidak pernah cocok untuk semua kondisi foto — itulah
+// sebabnya hasilnya terasa kadang bisa kadang tidak.
+function versiHitamPutih(dataUrl) {
+  return new Promise((selesai, gagal) => {
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement('canvas');
+      c.width = img.width; c.height = img.height;
+      const ctx = c.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(img, 0, 0);
+      const d = ctx.getImageData(0, 0, c.width, c.height), p = d.data;
+
+      // Ambang Otsu: dihitung dari sebaran terang gambar itu sendiri, bukan
+      // angka tetap yang akan salah untuk foto gelap maupun terlalu terang.
+      const hist = new Uint32Array(256);
+      for (let i = 0; i < p.length; i += 4) hist[p[i]]++;
+      const n = p.length / 4;
+      let jumlah = 0;
+      for (let v = 0; v < 256; v++) jumlah += v * hist[v];
+      let jumlahB = 0, bobotB = 0, maks = -1, ambang = 128;
+      for (let v = 0; v < 256; v++) {
+        bobotB += hist[v];
+        if (!bobotB) continue;
+        const bobotF = n - bobotB;
+        if (!bobotF) break;
+        jumlahB += v * hist[v];
+        const selisih = (jumlahB / bobotB) - ((jumlah - jumlahB) / bobotF);
+        const antar = bobotB * bobotF * selisih * selisih;
+        if (antar > maks) { maks = antar; ambang = v; }
+      }
+      for (let i = 0; i < p.length; i += 4) {
+        const v = p[i] > ambang ? 255 : 0;
+        p[i] = p[i + 1] = p[i + 2] = v;
+      }
+      ctx.putImageData(d, 0, 0);
+      selesai(c.toDataURL('image/png'));
+    };
+    img.onerror = () => gagal(new Error('Gagal memuat gambar untuk percobaan kedua.'));
+    img.src = dataUrl;
+  });
 }
 
 // Kecilkan dan kompres lewat canvas. Kualitas diturunkan bertahap sampai muat.
@@ -3049,15 +3168,33 @@ window.handleReceiptFile = async function(event) {
     const worker = await getOcrWorker(pesan => { hint.textContent = pesan; });
     // Yang dibaca versi besar & berkontras; yang disimpan tetap versi kecil.
     hint.textContent = 'Menyiapkan gambar…';
-    const gambarOCR = await siapkanUntukOCR(file);
-    const hasil = await worker.recognize(gambarOCR);
-    const teks = hasil?.data?.text || '';
+    const siap = await siapkanUntukOCR(file);
+
+    // Dua percobaan dengan pra-proses berbeda. Tidak ada satu cara yang cocok
+    // untuk semua kondisi foto — itu persis yang membuat hasilnya terasa kadang
+    // bisa kadang tidak. Percobaan kedua hanya dijalankan bila yang pertama
+    // tidak menemukan baris TOTAL, jadi foto yang jelas tetap cepat.
+    let teks = (await worker.recognize(siap.dataUrl))?.data?.text || '';
+    let data = parseReceipt(teks);
+
+    if (data.amount === null || data.ditebak) {
+      hint.textContent = 'Mencoba sekali lagi…';
+      try {
+        const teks2 = (await worker.recognize(await versiHitamPutih(siap.dataUrl)))?.data?.text || '';
+        const data2 = parseReceipt(teks2);
+        // Hasil yang menemukan baris TOTAL selalu menang atas tebakan; kalau
+        // dua-duanya tebakan, yang pertama dipertahankan.
+        if ((data2.amount !== null && !data2.ditebak) ||
+            (data.amount === null && data2.amount !== null)) {
+          teks = teks2; data = data2;
+        }
+      } catch (e) { console.warn('Percobaan kedua gagal:', e); }
+    }
 
     // Disimpan agar bisa dilihat lewat Diagnosa. Tanpa melihat apa yang
     // sebenarnya dibaca Tesseract, 'scan gagal' tidak memberi petunjuk apa pun
     // tentang penyebabnya — foto kurang tajam, atau parser yang meleset.
-    teksOCRTerakhir = teks;
-    const data = parseReceipt(teks);
+    teksOCRTerakhir = (siap.dipotong ? '[latar terpotong otomatis]\n' : '') + teks;
     applyReceiptToForm(data);
     pendingReceipt = img;
     showReceiptPreview(img.dataUrl, data);
