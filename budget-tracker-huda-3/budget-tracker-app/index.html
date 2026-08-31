@@ -1126,7 +1126,7 @@ import {
 
 // Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
 // perangkat masih menjalankan versi lama dari cache service worker.
-const APP_BUILD = '2026-09-01-f';
+const APP_BUILD = '2026-09-01-g';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
@@ -2699,6 +2699,43 @@ function getRecurring() {
 }
 function saveRecurring(list) {
   simpanSettings({ recurring: list });
+}
+
+// ── GABUNG RUTIN SAAT RESTORE ──
+// Restore dulu MENGGANTI seluruh daftar rutin dengan isi backup, padahal
+// dialognya menjanjikan "data akan DITAMBAHKAN". Rutin yang dibuat setelah
+// backup itu lenyap tanpa satu pun peringatan.
+//
+// Identitasnya bukan id, melainkan isinya. Id sebuah rutin adalah Date.now()
+// saat dibuat, jadi rutin yang sama di dua perangkat punya id berbeda —
+// mencocokkan lewat id akan menggandakannya.
+function kunciRutin(r) {
+  return [String(r?.name ?? '').trim().toLowerCase(), Number(r?.amount) || 0,
+          r?.type || '', r?.cat || '', Number(r?.day) || 0].join('|');
+}
+
+function gabungRutin(sekarang, dariBackup) {
+  const hasil = Array.isArray(sekarang) ? [...sekarang] : [];
+  if (!Array.isArray(dariBackup)) return hasil;
+  const adaKunci = new Set(hasil.map(kunciRutin));
+  const adaId    = new Set(hasil.map(r => String(r?.id)));
+  for (const r of dariBackup) {
+    if (!r || typeof r !== 'object') continue;
+    const k = kunciRutin(r);
+    if (adaKunci.has(k)) continue;
+    let id = r.id;
+    if (id == null || adaId.has(String(id))) {
+      // Id juga menandai kapan rutin dibuat (lihat bulanTerlewat). Id baru
+      // berarti "dibuat sekarang", sehingga rutin ini tidak akan membuat
+      // transaksi untuk bulan-bulan yang sudah lewat. Itu arah yang aman:
+      // melewatkan lebih baik daripada mengarang transaksi yang tak pernah ada.
+      id = Date.now() + hasil.length;
+    }
+    hasil.push({ ...r, id });
+    adaKunci.add(k);
+    adaId.add(String(id));
+  }
+  return hasil;
 }
 
 window.addRecurring = function() {
@@ -4329,12 +4366,30 @@ window.handleRestoreFile = function(event) {
   };
   const file = event.target.files[0];
   if(!file) return;
+
+  // Input file hanya memicu 'change' ketika nilainya BERUBAH. Tanpa
+  // pengosongan ini, siapa pun yang membatalkan konfirmasi lalu memilih berkas
+  // yang sama lagi tidak mendapat reaksi apa pun — tidak ada dialog, tidak ada
+  // pesan. Yang terlihat hanyalah tombol yang rusak.
+  const inputEl = event.target;
+  const bersihkanInput = () => { inputEl.value = ''; };
+
   const reader = new FileReader();
+  reader.onerror = () => {
+    bersihkanInput();
+    showT('Berkas tidak bisa dibaca.', 'error');
+  };
   reader.onload = async function(e) {
     try {
       const backup = JSON.parse(e.target.result);
       if(!backup.years) { alert('File backup tidak valid!'); return; }
-      if(!confirm(`Restore data dari backup tanggal ${new Date(backup.exportedAt).toLocaleDateString('id-ID')}?\n\nData akan DITAMBAHKAN ke data yang ada saat ini.`)) return;
+      // Backup lama tidak selalu punya exportedAt; tanpa penjagaan ini
+      // dialognya berbunyi "backup tanggal Invalid Date", yang membuat orang
+      // ragu menekan OK justru saat berkasnya sebenarnya baik-baik saja.
+      const tglBackup = new Date(backup.exportedAt);
+      const labelTgl = Number.isNaN(tglBackup.getTime())
+        ? 'yang dipilih' : 'tanggal ' + tglBackup.toLocaleDateString('id-ID');
+      if(!confirm(`Restore data dari backup ${labelTgl}?\n\nData akan DITAMBAHKAN ke data yang ada saat ini — yang sudah ada tidak akan tergantikan.`)) return;
 
       showT('⏳ Memulihkan data...', 'success');
       const uid = uidAtau('Sesi belum siap — muat ulang halaman lalu coba lagi.');
@@ -4372,7 +4427,9 @@ window.handleRestoreFile = function(event) {
 
       // Restore recurring & budget limits — ikut naik ke cloud, bukan localStorage
       const patch = {};
-      if(Array.isArray(backup.recurring)) patch.recurring = backup.recurring;
+      if(Array.isArray(backup.recurring)) {
+        patch.recurring = gabungRutin(settingsCache.recurring, backup.recurring);
+      }
       if(backup.budgetLimits && typeof backup.budgetLimits === 'object') {
         patch.budgetLimits = { ...settingsCache.budgetLimits, ...backup.budgetLimits };
       }
@@ -4386,6 +4443,10 @@ window.handleRestoreFile = function(event) {
       if(currentTab==='recurring') renderRecurringList();
     } catch(err) {
       showT('Gagal restore: '+err.message, 'error');
+    } finally {
+      // Setiap jalan keluar lewat sini: berkas tidak valid, konfirmasi
+      // dibatalkan, sesi belum siap, berhasil, maupun gagal.
+      bersihkanInput();
     }
   };
   reader.readAsText(file);
