@@ -115,6 +115,21 @@
    dikembalikan ke hijau. Class .modal-subtitle, .modal-section-label,
    .modal-info-box, .modal-warn, .modal-desc dan .modal-actions ikut dibuang
    karena tidak pernah dipakai di markup. */
+  /* Bar langganan. Warnanya emas saat memperingatkan dan merah saat sudah
+     berhenti — bukan merah sejak awal, supaya peringatan yang benar-benar
+     mendesak tidak kehilangan artinya. */
+  .langganan-bar{display:flex;align-items:center;flex-wrap:wrap;gap:8px;
+    background:var(--gold-dim);border:1px solid var(--gold);color:var(--text);
+    border-radius:12px;padding:10px 14px;margin-bottom:14px;font-size:13px;line-height:1.5;}
+  .langganan-bar.habis{background:var(--red-dim);border-color:var(--red);}
+  .langganan-bar b{font-weight:700;}
+  .langganan-bar button{margin-left:auto;background:transparent;border:1px solid currentColor;
+    color:inherit;border-radius:8px;padding:5px 12px;font:inherit;font-size:12px;cursor:pointer;}
+  .langganan-bar button:hover{background:rgba(255,255,255,0.08);}
+  .langganan-harga{font-family:var(--mono);font-size:22px;color:var(--green);margin:10px 0 4px;}
+  .langganan-cara{background:var(--surface2);border:1px solid var(--border);border-radius:10px;
+    padding:12px 14px;margin-top:12px;font-size:13px;line-height:1.7;color:var(--text-dim);
+    user-select:text;-webkit-user-select:text;}
   .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:200;display:none;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(4px);}
   .modal-overlay.show{display:flex;animation:fade-up 0.25s ease both;}
   .modal-box{position:relative;background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:28px;max-width:420px;width:100%;max-height:85vh;overflow-y:auto;animation:fade-up 0.3s ease both;}
@@ -760,6 +775,10 @@
 <!-- MAIN APP -->
 <div class="wrapper" id="mainApp" style="display:none">
 
+  <!-- Sengaja tidak muncul selama masa coba masih panjang. Peringatan yang
+       ditampilkan terus-menerus akan diabaikan justru ketika penting. -->
+  <div id="langgananBar" class="langganan-bar" style="display:none"></div>
+
   <div class="header">
     <div class="header-badge"><span></span> Cloud Sync Aktif</div>
     <h1 id="appTitle" onclick="ubahNama()" title="Ketuk untuk mengganti nama" style="cursor:pointer">Keuangan</h1>
@@ -837,6 +856,22 @@
     <button class="tab-btn" onclick="setTab('out')">Pengeluaran</button>
     <button class="tab-btn" onclick="setTab('annual')">Tahunan</button>
     <button class="tab-btn" onclick="setTab('recurring')">Rutin</button>
+  </div>
+
+  <div class="modal-overlay" id="langgananModal">
+    <div class="modal-box">
+      <button class="modal-close" onclick="tutupLangganan()">✕</button>
+      <div class="modal-title">Berlangganan</div>
+      <div class="modal-sub">Agar pencatatan tetap berjalan</div>
+      <p id="langgananPesan" style="font-size:13px;line-height:1.7;color:var(--text-dim);margin:12px 0 0"></p>
+      <div class="langganan-harga">Rp 15.000 / bulan</div>
+      <div class="langganan-cara">
+        1. Transfer ke <b>DANA / GoPay 0831-4063-2957</b><br>
+        2. Kirim bukti + email akunmu ke WhatsApp yang sama<br>
+        3. Akun aktif dalam 1x24 jam
+      </div>
+      <button class="modal-btn secondary" onclick="tutupLangganan()" style="margin-top:14px">Tutup</button>
+    </div>
   </div>
 
   <div class="modal-overlay" id="diagModal">
@@ -1090,7 +1125,7 @@ import {
 
 // Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
 // perangkat masih menjalankan versi lama dari cache service worker.
-const APP_BUILD = '2026-09-01-d';
+const APP_BUILD = '2026-09-01-e';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
@@ -1116,8 +1151,34 @@ function initCache(year) {
 initCache(currentYear);
 
 // ── CONFIG ──────────────────────────────────────
+// Config bawaan layanan. Nilai-nilai ini memang publik: Firebase mengirimkannya
+// ke setiap pengunjung di dalam sumber halaman, dan tidak ada satu pun yang
+// memberi wewenang apa pun. Yang menjaga data adalah Firestore rules + Auth,
+// bukan kerahasiaan config. Yang TIDAK BOLEH ada di sini adalah service account
+// key — kuncinya melewati seluruh rules dan hanya boleh hidup sebagai secret
+// GitHub bernama FIREBASE_SERVICE_ACCOUNT.
+//
+// Selama masih berisi placeholder, aplikasi kembali ke layar setup seperti dulu.
+const CONFIG_BAWAAN = {
+  apiKey:            'ISI_API_KEY',
+  authDomain:        'ISI_PROJECT_ID.firebaseapp.com',
+  projectId:         'ISI_PROJECT_ID',
+  appId:             'ISI_APP_ID',
+  messagingSenderId: 'ISI_SENDER_ID',
+};
+function adaConfigBawaan() {
+  return !String(CONFIG_BAWAAN.apiKey).startsWith('ISI_');
+}
+
+// localStorage menang atas bawaan. Itu yang membuat tautan #cfg= dan layar setup
+// tetap berguna bagi siapa pun yang ingin memakai Firebase miliknya sendiri,
+// tanpa mengubah apa pun bagi pengguna biasa.
 function getConfig() {
-  try { return JSON.parse(localStorage.getItem('fbConfig')); } catch { return null; }
+  try {
+    const simpanan = JSON.parse(localStorage.getItem('fbConfig'));
+    if (simpanan?.apiKey) return simpanan;
+  } catch {}
+  return adaConfigBawaan() ? { ...CONFIG_BAWAAN } : null;
 }
 
 // Mengetik empat nilai di HP rawan: autofill mengembalikan nilai lama, dan orang
@@ -1216,6 +1277,8 @@ window.saveConfig = function() {
 };
 
 window.resetConfig = function() {
+  // Dengan config bawaan, ini berarti "kembali ke Firebase layanan" — bukan
+  // terlempar ke layar setup, yang bagi pengguna biasa terasa seperti kerusakan.
   localStorage.removeItem('fbConfig');
   location.reload();
 };
@@ -1259,6 +1322,7 @@ function startApp(cfg) {
         terapkanNama();
         setTimeout(() => { try { buildUI(); } catch(e2) { console.error('buildUI error:', e2); } }, 100);
         cekTokenSesuaiProject(user);
+        muatLangganan(user);
       } else {
         currentUser = null;
         document.getElementById('mainApp').style.display = 'none';
@@ -1806,6 +1870,7 @@ window.addEntry = async function(type) {
   const btn = document.getElementById(type==='in' ? 'btnAddIn' : 'btnAddOut');
   const amount = angkaDari(document.getElementById(type+'Amount').value);
   const desc   = document.getElementById(type+'Desc').value.trim();
+  if(!bolehMencatat()) { tampilkanGerbangLangganan(); return; }
   if(!amount || amount <= 0) { showToast('Masukkan jumlah yang valid!','error'); return; }
   if(!desc) { showToast('Keterangan tidak boleh kosong!','error'); return; }
 
@@ -2414,6 +2479,119 @@ function highlight(text) {
 
 
 
+// ── LANGGANAN ──────────────────────────────────
+// Masa coba dihitung dari waktu pembuatan akun di Firebase Auth, bukan dari
+// dokumen di database. Firebase yang menetapkannya dan pengguna tidak bisa
+// menyentuhnya, jadi masa coba tidak bisa diulang dengan menghapus data.
+//
+// Status berbayar ada di `billing/{uid}` — koleksi tingkat atas, sengaja DI LUAR
+// users/{uid}. Rules Firestore bersifat OR: aturan `users/{uid}/{document=**}`
+// yang mengizinkan tulis akan ikut mengizinkan tulis pada apa pun di bawahnya.
+// Menaruh billing di luar adalah satu-satunya cara membuatnya benar-benar hanya
+// bisa dibaca oleh pemiliknya.
+const HARI_MASA_COBA = 14;
+
+function tglISO(d) {
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+function selisihHari(dariISO, sampaiISO) {
+  const a = Date.parse(dariISO + 'T00:00:00Z'), b = Date.parse(sampaiISO + 'T00:00:00Z');
+  if (Number.isNaN(a) || Number.isNaN(b)) return null;
+  return Math.round((b - a) / 86400000);
+}
+function tambahHari(iso, n) {
+  const t = Date.parse(iso + 'T00:00:00Z');
+  if (Number.isNaN(t)) return null;
+  return tglISO(new Date(new Date(t + n * 86400000).toISOString().slice(0, 10) + 'T12:00:00'));
+}
+
+// Murni dan bisa diuji: tidak menyentuh jaringan, jam, maupun DOM.
+//   dibuatISO  — tanggal akun dibuat, 'YYYY-MM-DD'
+//   billing    — isi dokumen billing/{uid}, atau null bila belum ada
+//   hariIniISO — tanggal hari ini di zona waktu perangkat
+function hitungLangganan(dibuatISO, billing, hariIniISO) {
+  const sampaiBayar = billing?.sampai;
+  // Perbandingannya harus melawan null secara tegas: selisihHari() memberi null
+  // untuk tanggal yang tidak terbaca, dan `null >= 0` bernilai true di
+  // JavaScript. Tanpa penjagaan ini, satu dokumen billing yang rusak memberi
+  // langganan aktif selamanya.
+  const sisaBayar = sampaiBayar ? selisihHari(hariIniISO, sampaiBayar) : null;
+  if (sisaBayar !== null && sisaBayar >= 0) {
+    return { status: 'aktif', sisaHari: sisaBayar, sampai: sampaiBayar };
+  }
+  // Tanggal pembuatan akun tidak terbaca hanya bila ada yang salah di sisi kami.
+  // Dalam keadaan itu pengguna dibiarkan masuk: mengunci pelanggan yang sudah
+  // membayar karena bug kami sendiri jauh lebih merugikan daripada memberi
+  // beberapa hari gratis.
+  if (!dibuatISO || selisihHari(dibuatISO, hariIniISO) === null) {
+    return { status: 'trial', sisaHari: HARI_MASA_COBA, sampai: null };
+  }
+  const akhir = tambahHari(dibuatISO, HARI_MASA_COBA);
+  const sisa = selisihHari(hariIniISO, akhir);
+  if (sisa >= 0) return { status: 'trial', sisaHari: sisa, sampai: akhir };
+  return { status: 'kadaluarsa', sisaHari: 0, sampai: sampaiBayar || akhir };
+}
+
+// Dibaca sekali saat login. Kegagalan membaca TIDAK mengunci siapa pun: kalau
+// jaringan atau rules bermasalah, pengguna tetap masuk dengan status masa coba.
+// Kehilangan sedikit pendapatan jauh lebih ringan daripada memblokir orang yang
+// sudah membayar karena sesuatu di sisi kami.
+async function muatLangganan(user) {
+  const dibuat = user?.metadata?.creationTime
+    ? tglISO(new Date(user.metadata.creationTime)) : null;
+  let billing = null;
+  try {
+    const snap = await getDoc(doc(db, 'billing', user.uid));
+    if (snap.exists()) billing = snap.data();
+  } catch (e) { console.warn('Status langganan tidak terbaca:', e); }
+  langgananSaatIni = hitungLangganan(dibuat, billing, tglISO(new Date()));
+  tampilkanStatusLangganan();
+}
+
+function tampilkanStatusLangganan() {
+  const bar = document.getElementById('langgananBar');
+  if (!bar) return;
+  const { status, sisaHari, sampai } = langgananSaatIni;
+  if (status === 'aktif') { bar.style.display = 'none'; return; }
+  if (status === 'trial') {
+    // Diam saja selama masih lama; muncul hanya ketika sudah pantas diketahui.
+    if (sisaHari > 5) { bar.style.display = 'none'; return; }
+    bar.className = 'langganan-bar';
+    bar.innerHTML = `Masa coba tinggal <b>${sisaHari === 0 ? 'hari ini' : sisaHari + ' hari'}</b>. ` +
+      `<button onclick="tampilkanGerbangLangganan()">Lihat cara berlangganan</button>`;
+  } else {
+    bar.className = 'langganan-bar habis';
+    bar.innerHTML = `Masa berlangganan berakhir${sampai ? ' ' + sampai : ''}. Pencatatan dihentikan. ` +
+      `<button onclick="tampilkanGerbangLangganan()">Perpanjang</button>`;
+  }
+  bar.style.display = 'flex';
+}
+
+window.tampilkanGerbangLangganan = function() {
+  const habis = langgananSaatIni.status === 'kadaluarsa';
+  showToast(habis
+    ? 'Masa berlangganan habis. Datamu tetap aman dan bisa diekspor kapan saja.'
+    : `Masa coba tersisa ${langgananSaatIni.sisaHari} hari.`, habis ? 'error' : 'info');
+  const m = document.getElementById('langgananModal');
+  if (m) { document.getElementById('langgananPesan').textContent = habis
+    ? 'Pencatatan dihentikan, tetapi seluruh datamu tetap utuh — masih bisa dilihat, dicari, dan diekspor kapan saja.'
+    : `Masa coba tersisa ${langgananSaatIni.sisaHari} hari. Setelah itu pencatatan berhenti, tetapi datamu tetap utuh.`;
+    m.style.display = 'flex'; }
+};
+window.tutupLangganan = function() {
+  const m = document.getElementById('langgananModal');
+  if (m) m.style.display = 'none';
+};
+
+// Satu tempat yang menentukan apa yang boleh dilakukan. Saat masa berlangganan
+// habis, mencatat dihentikan — tetapi membaca, mencari, mengekspor, dan membuat
+// cadangan tetap terbuka. Data itu milik mereka; menyanderanya tidak pantas dan
+// juga buruk untuk usaha ini.
+function bolehMencatat() { return langgananSaatIni.status !== 'kadaluarsa'; }
+
+let langgananSaatIni = { status: 'trial', sisaHari: HARI_MASA_COBA, sampai: null };
+
 // ── PENGATURAN TERSINKRON ──────────────────────
 // Transaksi rutin dan limit budget dulu hanya ada di localStorage, sehingga tidak
 // ikut berpindah antar perangkat — padahal seluruh aplikasi ini menjanjikan cloud
@@ -2734,6 +2912,9 @@ function bulanTerlewat(rec, sekarang = new Date()) {
 let rutinSudahDicek = false;
 async function terapkanRutinJatuhTempo() {
   if (rutinSudahDicek) return;
+  // Rutin otomatis juga membuat catatan baru. Tanpa penjagaan ini, transaksi
+  // akan tetap bermunculan sendiri setelah masa berlangganan habis.
+  if (!bolehMencatat()) return;
   const uid = currentUser?.uid;
   if (!uid || !db) return;
   rutinSudahDicek = true;
@@ -2835,6 +3016,7 @@ async function kejarBulanTerlewat(uid, sekarang = new Date()) {
 }
 
 window.applyRecurring = async function(id) {
+  if(!bolehMencatat()) { tampilkanGerbangLangganan(); return; }
   const rec = getRecurring().find(r=>r.id===id);
   if(!rec) return;
   const month = MONTHS[currentMonth];
@@ -2868,6 +3050,7 @@ window.applyRecurring = async function(id) {
 };
 
 window.applyAllRecurring = async function() {
+  if(!bolehMencatat()) { tampilkanGerbangLangganan(); return; }
   const list = getRecurring();
   if(list.length===0) { showToast('Belum ada transaksi rutin!','error'); return; }
   for(const rec of list) { await applyRecurring(rec.id); }

@@ -92,6 +92,16 @@ konfigurasi, dan otomatis kedaluwarsa setelah 30 hari. Ganti sekarang:
    rules_version = '2';
    service cloud.firestore {
      match /databases/{database}/documents {
+
+       // Status langganan. Pemiliknya boleh MEMBACA, tidak boleh menulis —
+       // hanya service account (skrip aktifkan-langganan.mjs) yang menulis
+       // ke sini, dan service account menembus seluruh aturan ini.
+       match /billing/{userId} {
+         allow read:  if request.auth != null && request.auth.uid == userId;
+         allow write: if false;
+       }
+
+       // Data pengguna: miliknya sendiri, penuh.
        match /users/{userId}/{document=**} {
          allow read, write: if request.auth != null && request.auth.uid == userId;
        }
@@ -103,6 +113,18 @@ konfigurasi, dan otomatis kedaluwarsa setelah 30 hari. Ganti sekarang:
 
 Efeknya: setiap pengguna hanya bisa membaca dan menulis datanya sendiri, dan aturan
 ini tidak punya masa kedaluwarsa.
+
+> **Kenapa `billing` diletakkan di luar `users/`?**
+> Aturan Firestore bersifat ATAU, bukan DAN — kalau ada satu aturan yang
+> mengizinkan, akses diberikan. Seandainya status langganan disimpan di
+> `users/{uid}/billing/status`, aturan `users/{userId}/{document=**}` di atas
+> akan ikut mengizinkan pengguna menulisnya, dan siapa pun bisa mengaktifkan
+> langganannya sendiri lewat konsol browser. Menaruhnya di koleksi terpisah
+> adalah satu-satunya cara membuatnya benar-benar hanya-baca.
+>
+> Masa coba 14 hari tidak disimpan di mana pun: ia dihitung dari waktu pembuatan
+> akun di Firebase Auth. Firebase yang menetapkan nilai itu dan pengguna tidak
+> bisa menyentuhnya, jadi masa coba tidak bisa diulang dengan menghapus data.
 
 ---
 
