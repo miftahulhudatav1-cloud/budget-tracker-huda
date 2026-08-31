@@ -152,7 +152,16 @@
   .auth-submit{width:100%;font-family:var(--sans);font-size:14px;font-weight:700;padding:13px;border-radius:12px;border:none;cursor:pointer;background:var(--green);color:#0A0F1E;transition:all 0.2s;margin-top:4px;}
   .auth-submit:hover{filter:brightness(1.1);transform:translateY(-1px);}
   .auth-submit:disabled{opacity:0.5;cursor:not-allowed;transform:none;}
-  .auth-err{font-size:12px;color:var(--red);margin-top:8px;display:none;text-align:center;}
+  /* Tombol mata diletakkan di dalam kolom, jadi kolomnya diberi ruang kanan
+     agar teks password tidak tertimpa ikonnya. */
+  .pw-wrap{position:relative;}
+  .pw-wrap input{padding-right:44px;}
+  .pw-toggle{position:absolute;right:6px;top:50%;transform:translateY(-50%);
+    background:none;border:none;cursor:pointer;font-size:15px;line-height:1;
+    padding:6px 8px;border-radius:8px;opacity:0.6;transition:opacity 0.2s,background 0.2s;}
+  .pw-toggle:hover{opacity:1;background:var(--surface);}
+  .pw-toggle.on{opacity:1;}
+  .auth-err{font-size:12px;color:var(--red);margin-top:8px;display:none;text-align:center;line-height:1.5;word-break:break-word;}
   .auth-ok{font-size:12px;color:var(--green);margin-top:8px;display:none;text-align:center;line-height:1.5;}
   .auth-link{font-family:var(--sans);font-size:12px;background:none;border:none;cursor:pointer;
     color:var(--text-muted);text-decoration:underline;padding:4px;transition:color 0.2s;}
@@ -640,7 +649,14 @@
       <button class="auth-tab" onclick="switchAuthTab('register')">Daftar</button>
     </div>
     <div class="auth-field"><label>Email</label><input type="email" id="authEmail" placeholder="email@kamu.com"></div>
-    <div class="auth-field"><label>Password</label><input type="password" id="authPassword" placeholder="Min. 6 karakter"></div>
+    <div class="auth-field">
+      <label>Password</label>
+      <div class="pw-wrap">
+        <input type="password" id="authPassword" placeholder="Min. 6 karakter" autocomplete="current-password">
+        <button type="button" class="pw-toggle" id="pwToggle" onclick="togglePassword()"
+                aria-label="Tampilkan password" title="Tampilkan password">👁</button>
+      </div>
+    </div>
     <div class="auth-field" id="authNameField" style="display:none"><label>Nama (opsional)</label><input type="text" id="authName" placeholder="cth: Huda"></div>
     <button class="auth-submit" id="authSubmit" onclick="submitAuth()">Masuk</button>
     <p class="auth-err" id="authErr"></p>
@@ -969,7 +985,7 @@ import {
 
 // Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
 // perangkat masih menjalankan versi lama dari cache service worker.
-const APP_BUILD = '2026-08-31-d';
+const APP_BUILD = '2026-08-31-e';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
@@ -3061,6 +3077,22 @@ window.handleRestoreFile = function(event) {
 
 // ── AUTH FUNCTIONS ─────────────────────────────
 let authMode = 'login';
+
+window.togglePassword = function() {
+  const inp = document.getElementById('authPassword');
+  const btn = document.getElementById('pwToggle');
+  if (!inp || !btn) return;
+  const tampil = inp.type === 'password';
+  inp.type = tampil ? 'text' : 'password';
+  btn.textContent = tampil ? '🙈' : '👁';
+  btn.classList.toggle('on', tampil);
+  btn.title = btn.ariaLabel = tampil ? 'Sembunyikan password' : 'Tampilkan password';
+  // Kursor dikembalikan ke akhir teks; sebagian browser memindahkannya ke awal
+  // saat type berubah, yang membuat ketikan berikutnya menyisip di depan.
+  const n = inp.value.length;
+  inp.focus();
+  try { inp.setSelectionRange(n, n); } catch {}
+};
 
 window.forgotPassword = async function() {
   const email = document.getElementById('authEmail').value.trim();
