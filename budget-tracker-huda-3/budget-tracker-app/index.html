@@ -500,6 +500,8 @@
   .badge-green{background:var(--green-dim);color:var(--green);}
   .badge-red{background:var(--red-dim);color:var(--red);}
   .badge-blue{background:var(--blue-dim);color:var(--blue);}
+  /* Penanda bulan pada hasil pencarian lintas bulan. */
+  .badge-month{background:var(--purple-dim);color:var(--purple);margin-left:6px;}
   .badge-purple{background:var(--purple-dim);color:var(--purple);}
   .del-btn{background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:13px;padding:3px 6px;border-radius:6px;transition:all 0.15s;line-height:1;}
   .del-btn:hover{color:var(--red);background:var(--red-dim);}
@@ -1017,7 +1019,7 @@ import {
 
 // Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
 // perangkat masih menjalankan versi lama dari cache service worker.
-const APP_BUILD = '2026-08-31-m';
+const APP_BUILD = '2026-08-31-n';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
@@ -1393,6 +1395,9 @@ window.runDiagnostics = async function() {
 
   const cfg = getConfig() || {};
   tulis('build : ' + APP_BUILD);
+  tulis('model data : ' + (sudahMigrasi()
+    ? 'transactions (migrasi selesai)'
+    : 'per-bulan (migrasi belum selesai — data lama tetap dipakai)'));
   tulis('\n── CONFIG ──');
   tulis('projectId  : ' + (cfg.projectId || '(kosong)'));
   tulis('authDomain : ' + (cfg.authDomain || '(kosong)'));
@@ -1902,9 +1907,20 @@ function render() {
 
 
 // ── SEARCH ─────────────────────────────────────
+// Bulan selain yang aktif belum tentu ada di memori, jadi setahun dimuat sekali
+// saat pencarian pertama. Dijaga agar tidak dipanggil berulang di tiap ketikan.
+let tahunDimuatUntukCari = null;
 window.onSearch = function() {
   const q = document.getElementById('searchInput').value;
   document.getElementById('searchClear').style.display = q ? 'block' : 'none';
+
+  if (q.trim() && sudahMigrasi() && tahunDimuatUntukCari !== currentYear) {
+    tahunDimuatUntukCari = currentYear;
+    loadYearIntoCache(currentYear)
+      .then(() => { renderFilteredTable('in'); renderFilteredTable('out'); })
+      .catch(e => { tahunDimuatUntukCari = null; console.error('Gagal memuat setahun:', e); });
+  }
+
   renderFilteredTable('in');
   renderFilteredTable('out');
   window.renderInsights();
@@ -1936,10 +1952,23 @@ window.resetFilter = function(type) {
   renderFilteredTable(type);
 };
 
-function getFiltered(type) {
-  const month = MONTHS[currentMonth];
+// Saat ada kata kunci, pencarian melintasi SELURUH bulan di tahun berjalan —
+// itu tujuan dipindahkannya data ke satu koleksi. Tanpa kata kunci, perilakunya
+// tetap seperti semula: hanya bulan yang sedang dibuka.
+function sumberEntri(type) {
   initCache(currentYear);
-  const entries = cache[currentYear][month][type];
+  if (!getSearchQuery() || !sudahMigrasi()) {
+    return cache[currentYear][MONTHS[currentMonth]][type];
+  }
+  const semua = [];
+  MONTHS.forEach(m => {
+    (cache[currentYear][m]?.[type] || []).forEach(e => semua.push({ ...e, _bulan: m }));
+  });
+  return semua.sort(urutTanggalDesc);
+}
+
+function getFiltered(type) {
+  const entries = sumberEntri(type);
   const q = getSearchQuery();
   if(type==='in') {
     const kat   = document.getElementById('inFilterKat').value;
@@ -1971,16 +2000,21 @@ function getFiltered(type) {
 }
 
 function renderFilteredTable(type) {
-  const month = MONTHS[currentMonth];
   initCache(currentYear);
-  const all      = cache[currentYear][month][type];
+  // Pembandingnya harus sumber yang sama dengan yang disaring. Saat mencari
+  // lintas bulan, membandingkan ke bulan aktif saja menghasilkan label janggal
+  // seperti "8 / 3 entri".
+  const all      = sumberEntri(type);
   const filtered = getFiltered(type);
   const total    = filtered.reduce((s,e)=>s+e.amount,0);
   const isFiltered = filtered.length !== all.length;
-  const countEl  = document.getElementById(type+'Count');
-  countEl.textContent = isFiltered
-    ? `${filtered.length} / ${all.length} entri`
-    : `${all.length} entri`;
+  const lintasBulan = !!getSearchQuery() && sudahMigrasi();
+
+  const countEl = document.getElementById(type+'Count');
+  countEl.textContent = lintasBulan
+    ? `${filtered.length} entri · seluruh ${currentYear}`
+    : (isFiltered ? `${filtered.length} / ${all.length} entri` : `${all.length} entri`);
+
   renderTable(type, filtered, total, isFiltered);
 }
 
@@ -2003,7 +2037,7 @@ function renderTable(type, entries, total, isFiltered=false) {
         <div class="entry-info">
           <div class="entry-desc">${highlight(e.desc)}${receiptTag(e)}</div>
           <div class="entry-meta">
-            ${esc(e.date)||'—'} · <span style="color:${isIn?'var(--green)':'var(--red)'}">${esc(e.cat)||'—'}</span>
+            ${esc(e.date)||'—'}${labelBulan(e)} · <span style="color:${isIn?'var(--green)':'var(--red)'}">${esc(e.cat)||'—'}</span>
             ${!isIn && e.method ? ' · '+esc(e.method) : ''}
           </div>
         </div>
@@ -2022,7 +2056,7 @@ function renderTable(type, entries, total, isFiltered=false) {
     // ── DESKTOP: Table layout ────────────────────
     const rows = entries.map((e,i) => `
       <tr class="${i===0?'new-row':''}">
-        <td>${esc(e.date)||'—'}</td><td>${highlight(e.desc)}${receiptTag(e)}</td>
+        <td>${esc(e.date)||'—'}${labelBulan(e)}</td><td>${highlight(e.desc)}${receiptTag(e)}</td>
         <td><span class="badge ${isIn?'badge-green':'badge-red'}">${esc(e.cat)||'—'}</span></td>
         <td><span class="badge badge-blue">${esc(e.type)||'—'}</span></td>
         ${!isIn?`<td><span class="badge badge-purple">${esc(e.method)||'—'}</span></td>`:''}
@@ -2202,6 +2236,14 @@ function animVal(id,value) {
 
 // Firestore membuat id dokumen dari [A-Za-z0-9], tapi tetap dilewatkan esc()
 // karena nilainya berasal dari dokumen dan akan masuk ke atribut onclick.
+// Hasil pencarian bisa datang dari bulan mana pun, jadi bulannya ditandai —
+// tanpa itu daftar campuran tidak bisa dibaca. Entri dari bulan yang sedang
+// dibuka tidak diberi tanda supaya tampilan normal tidak jadi ramai.
+function labelBulan(e) {
+  if (!e._bulan || e._bulan === MONTHS[currentMonth]) return '';
+  return ` <span class="badge badge-month">${esc(e._bulan)}</span>`;
+}
+
 function receiptTag(e) {
   if (!e.receiptId) return '';
   return ` <button class="receipt-tag" title="Lihat foto struk" onclick="viewReceipt('${esc(e.receiptId)}')">🧾</button>`;
