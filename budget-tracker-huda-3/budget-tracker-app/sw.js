@@ -5,7 +5,7 @@
 // Akibatnya Chrome hanya menawarkan "Add to Home screen" berupa pintasan bookmark
 // yang membuka tab browser, bukan "Install app" yang berjalan layar penuh.
 
-const VERSI = 'bth-2026-09-01-a';
+const VERSI = 'bth-2026-09-01-b';
 const SHELL = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {

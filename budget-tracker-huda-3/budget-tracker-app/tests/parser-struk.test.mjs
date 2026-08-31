@@ -102,5 +102,54 @@ cek('tak ada angka sama sekali', parseReceipt('TOKO ABC\nterima kasih').amount, 
 // Nomor meja atau jumlah item bukan nominal
 cek('angka di bawah 1000 diabaikan', parseReceipt('TOKO\nMEJA 5\nQTY 2').amount, null);
 
+// ── struk asli: rumah makan, Bogor ───────────────
+// Diambil dari struk sungguhan yang gagal dibaca. Nilainya bukan pada angka
+// totalnya, melainkan pada angka-angka pengecoh di sekitarnya: nomor telepon,
+// Order ID, dan kode pos semuanya JAUH lebih besar dari total sebenarnya.
+const strukAsli = `
+Outlet 1
+Jalan desa, Sukakarya, Kec. Megamendung, Kabupat
+en Bogor, Jawa Barat 16770, Kab. Bogor, Jawa Bar
+at, 16770
+083140632957
+Queue No:6
+24 Agu 2026                          11:51
+Receipt Number                       3B0DJ5
+Order ID                             6M00006
+Bill Name                            06
+Collected By                  Yunita Maida
+Dine In
+Nasi Goreng Babat Horti      x1   Rp 40.000
+Pedas
+Nasi Goreng Kecombrang Sate..x1   Rp 55.000
+Pedas
+Subtotal                          Rp 95.000
+PB1(10%)                           Rp 9.500
+Service Charge(5%)                 Rp 4.750
+Rounding Amount                    (Rp 250)
+Total                            Rp 109.000
+Dana                             Rp 109.000
+Notes
+Thankyou
+`;
+const hasilAsli = parseReceipt(strukAsli);
+cek('struk asli: total 109.000, bukan subtotal 95.000', hasilAsli.amount, 109000);
+cek('struk asli: bukan tebakan',                        hasilAsli.ditebak, false);
+cek('struk asli: tanggal "24 Agu 2026"',                hasilAsli.date, '2026-08-24');
+cek('struk asli: kategori Makanan',                     hasilAsli.cat, 'Makanan');
+
+// "Subtotal" tidak boleh cocok dengan pola \btotal\b — kalau batas katanya
+// keliru, seluruh struk berjenis ini akan melaporkan angka sebelum pajak.
+cek('Subtotal tidak dianggap Total',
+  parseReceipt('TOKO\nSubtotal Rp 95.000\nTotal Rp 109.000').amount, 109000);
+
+// Bila kata Total rusak terbaca OCR, cadangan harus tetap menemukan 109.000 —
+// BUKAN nomor telepon 083140632957 yang nilainya 83 miliar.
+const totalRusak = strukAsli.replace('Total  ', 'T0ta1  ');
+const hasilRusak = parseReceipt(totalRusak);
+cek('kata Total rusak: cadangan tetap 109.000', hasilRusak.amount, 109000);
+cek('cadangan menolak nomor telepon',           hasilRusak.amount < 1e9, true);
+cek('ditandai sebagai tebakan',                 hasilRusak.ditebak, true);
+
 console.log(`\n${lulus} lulus, ${gagal} gagal`);
 process.exit(gagal ? 1 : 0);
