@@ -835,7 +835,7 @@
       <!-- Add form -->
       <div class="recurring-form">
         <div class="field"><label>Nama Transaksi</label><input type="text" id="recName" placeholder="cth: Bayar Kos"></div>
-        <div class="field"><label>Jumlah (Rp)</label><input type="number" id="recAmount" placeholder="0" min="0"></div>
+        <div class="field"><label>Jumlah (Rp)</label><input type="text" inputmode="numeric" id="recAmount" placeholder="0" oninput="formatNominal(this)"></div>
         <div class="field"><label>Tipe</label>
           <select id="recType"><option value="out">Pengeluaran</option><option value="in">Pemasukan</option></select>
         </div>
@@ -872,7 +872,7 @@
     <div class="form-panel panel-in">
       <div class="form-grid">
         <div class="field"><label>Tanggal</label><input type="date" id="inDate"></div>
-        <div class="field"><label>Jumlah (Rp)</label><input type="number" id="inAmount" placeholder="0" min="0"></div>
+        <div class="field"><label>Jumlah (Rp)</label><input type="text" inputmode="numeric" id="inAmount" placeholder="0" oninput="formatNominal(this)"></div>
         <div class="field"><label>Sumber / Keterangan</label><input type="text" id="inDesc" placeholder="cth: Gaji Juli"></div>
         <div class="field"><label>Kategori</label>
           <select id="inCat"><option value="">-- Pilih --</option><option>Pekerjaan</option><option>Beasiswa</option><option>Freelance</option><option>Keluarga</option><option>Investasi</option><option>Hadiah</option><option>Lainnya</option></select>
@@ -920,7 +920,7 @@
       </div>
       <div class="form-grid">
         <div class="field"><label>Tanggal</label><input type="date" id="outDate"></div>
-        <div class="field"><label>Jumlah (Rp)</label><input type="number" id="outAmount" placeholder="0" min="0"></div>
+        <div class="field"><label>Jumlah (Rp)</label><input type="text" inputmode="numeric" id="outAmount" placeholder="0" oninput="formatNominal(this)"></div>
         <div class="field span2"><label>Keterangan</label><input type="text" id="outDesc" placeholder="cth: Makan siang"></div>
         <div class="field"><label>Kategori</label>
           <select id="outCat"><option value="">-- Pilih --</option><option>Tempat Tinggal</option><option>Makanan</option><option>Transportasi</option><option>Kuliah</option><option>Komunikasi</option><option>Kesehatan</option><option>Hiburan</option><option>Tabungan</option><option>Lainnya</option></select>
@@ -1002,7 +1002,7 @@
     <div class="modal-sub" id="editModalSub">Ubah lalu simpan</div>
     <div class="form-grid">
       <div class="field"><label>Tanggal</label><input type="date" id="editDate"></div>
-      <div class="field"><label>Jumlah (Rp)</label><input type="number" id="editAmount" min="0"></div>
+      <div class="field"><label>Jumlah (Rp)</label><input type="text" inputmode="numeric" id="editAmount" oninput="formatNominal(this)"></div>
       <div class="field span2"><label>Keterangan</label><input type="text" id="editDesc"></div>
       <div class="field"><label>Kategori</label><select id="editCat"></select></div>
       <div class="field"><label>Jenis</label><select id="editType"></select></div>
@@ -1061,7 +1061,7 @@ import {
 
 // Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
 // perangkat masih menjalankan versi lama dari cache service worker.
-const APP_BUILD = '2026-08-31-s';
+const APP_BUILD = '2026-08-31-t';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
@@ -1747,7 +1747,7 @@ function switchMonth(idx) {
 window.addEntry = async function(type) {
   const month = MONTHS[currentMonth];
   const btn = document.getElementById(type==='in' ? 'btnAddIn' : 'btnAddOut');
-  const amount = parseFloat(document.getElementById(type+'Amount').value);
+  const amount = angkaDari(document.getElementById(type+'Amount').value);
   const desc   = document.getElementById(type+'Desc').value.trim();
   if(!amount || amount <= 0) { showToast('Masukkan jumlah yang valid!','error'); return; }
   if(!desc) { showToast('Keterangan tidak boleh kosong!','error'); return; }
@@ -1834,7 +1834,7 @@ window.editEntry = function(type, id) {
   document.getElementById('editMethodField').style.display = type === 'out' ? '' : 'none';
 
   document.getElementById('editDate').value   = e.date || '';
-  document.getElementById('editAmount').value = e.amount ?? '';
+  document.getElementById('editAmount').value = e.amount != null ? formatRibuan(e.amount) : '';
   document.getElementById('editDesc').value   = e.desc || '';
   document.getElementById('editCat').value    = e.cat || '';
   document.getElementById('editType').value   = e.type || '';
@@ -1857,7 +1857,7 @@ window.saveEdit = async function() {
   const errEl = document.getElementById('editErr');
   const btn   = document.getElementById('editSaveBtn');
 
-  const amount = parseFloat(document.getElementById('editAmount').value);
+  const amount = angkaDari(document.getElementById('editAmount').value);
   const desc   = document.getElementById('editDesc').value.trim();
   if (!amount || amount <= 0) { errEl.textContent = 'Masukkan jumlah yang valid.'; errEl.style.display = 'block'; return; }
   if (!desc)                  { errEl.textContent = 'Keterangan tidak boleh kosong.'; errEl.style.display = 'block'; return; }
@@ -2262,6 +2262,35 @@ function setSyncStatus(state) {
   else{text.textContent='Offline';}
 }
 
+// ── INPUT NOMINAL ──────────────────────────────
+// input type="number" tidak bisa menampilkan pemisah ribuan — nilainya harus
+// berupa angka polos. Jadi kolomnya diubah jadi teks dengan inputmode numeric
+// (papan ketik angka di HP tetap muncul), dan titiknya dipasang saat mengetik.
+function formatRibuan(teks) {
+  const digit = String(teks ?? '').replace(/\D/g, '').replace(/^0+(?=\d)/, '');
+  return digit ? digit.replace(/\B(?=(\d{3})+(?!\d))/g, '.') : '';
+}
+
+function angkaDari(teks) {
+  const digit = String(teks ?? '').replace(/\D/g, '');
+  return digit ? parseInt(digit, 10) : NaN;
+}
+
+// Dipasang lewat oninput. Kursor dijaga relatif terhadap jumlah digit di
+// depannya — kalau hanya dipindah ke ujung, menyunting bagian tengah nominal
+// jadi mustahil.
+window.formatNominal = function(el) {
+  const posAwal = el.selectionStart ?? el.value.length;
+  const digitSebelum = el.value.slice(0, posAwal).replace(/\D/g, '').length;
+  el.value = formatRibuan(el.value);
+  let pos = 0, hitung = 0;
+  while (pos < el.value.length && hitung < digitSebelum) {
+    if (/\d/.test(el.value[pos])) hitung++;
+    pos++;
+  }
+  try { el.setSelectionRange(pos, pos); } catch(e) {}
+};
+
 function fmt(n) {
   const abs = Math.abs(n);
   const str = new Intl.NumberFormat('id-ID',{style:'currency',currency:'IDR',maximumFractionDigits:0}).format(abs);
@@ -2411,7 +2440,7 @@ function saveRecurring(list) {
 
 window.addRecurring = function() {
   const name   = document.getElementById('recName').value.trim();
-  const amount = parseFloat(document.getElementById('recAmount').value);
+  const amount = angkaDari(document.getElementById('recAmount').value);
   const type   = document.getElementById('recType').value;
   const cat    = document.getElementById('recCat').value;
   const day    = parseInt(document.getElementById('recDay').value);
@@ -2761,7 +2790,7 @@ function setIfValid(id, value) {
 
 function applyReceiptToForm(d) {
   if (typeof d.amount === 'number' && d.amount > 0) {
-    document.getElementById('outAmount').value = d.amount;
+    document.getElementById('outAmount').value = formatRibuan(d.amount);
   }
   if (d.date) setIfValid('outDate', d.date);
   setIfValid('outDesc', (d.desc || '').slice(0, 60));
@@ -2922,7 +2951,7 @@ function renderBudgetGrid() {
       </div>
       <div id="budgetInput_${cat.replace(/ /g,'_')}" style="display:none">
         <div class="budget-input-wrap">
-          <input type="number" class="budget-input" placeholder="Limit (Rp)" value="${limit||''}"
+          <input type="text" inputmode="numeric" class="budget-input" placeholder="Limit (Rp)" oninput="formatNominal(this)" value="${limit?formatRibuan(limit):''}"
             id="budgetVal_${cat.replace(/ /g,'_')}">
           <button class="budget-save" onclick="applyBudgetLimit('${cat}')">Simpan</button>
         </div>
@@ -3020,7 +3049,7 @@ window.toggleBudgetInput = function(cat) {
 
 window.applyBudgetLimit = function(cat) {
   const key = cat.replace(/ /g,'_');
-  const val = parseFloat(document.getElementById('budgetVal_'+key)?.value || 0);
+  const val = angkaDari(document.getElementById('budgetVal_'+key)?.value) || 0;
   saveBudgetLimit(cat, val);
   renderBudgetGrid();
   showToast(`Limit ${cat} disimpan`, 'success');
