@@ -945,6 +945,10 @@ import {
   onSnapshot, query, orderBy, serverTimestamp
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 
+// Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
+// perangkat masih menjalankan versi lama dari cache service worker.
+const APP_BUILD = '2026-08-31-a';
+
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
 // Rentang tahun yang tersedia di dropdown & dicakup backup: 2 tahun ke belakang, 8 ke depan.
@@ -1191,6 +1195,8 @@ function jelaskanError(err) {
 // mana token ini berlaku. Bila `aud` tidak sama dengan projectId yang dipakai
 // Firestore, berarti login dan database menunjuk project berbeda — dan setiap baca
 // pasti ditolak meski rules-nya sudah benar.
+let diagSudahTampil = false;
+
 function decodeJwtPayload(token) {
   try {
     const bagian = token.split('.')[1];
@@ -1209,10 +1215,16 @@ window.runDiagnostics = async function() {
   baris.length = 0;
 
   const cfg = getConfig() || {};
-  tulis('── CONFIG ──');
+  tulis('build : ' + APP_BUILD);
+  tulis('\n── CONFIG ──');
   tulis('projectId  : ' + (cfg.projectId || '(kosong)'));
   tulis('authDomain : ' + (cfg.authDomain || '(kosong)'));
   tulis('apiKey     : ' + (cfg.apiKey ? cfg.apiKey.slice(0, 12) + '…' : '(kosong)'));
+  const labelDomain = (cfg.authDomain || '').split('.')[0];
+  if (labelDomain && labelDomain !== cfg.projectId) {
+    tulis('>>> MASALAH: authDomain milik project "' + labelDomain +
+          '" tapi projectId "' + cfg.projectId + '" — dari dua project berbeda.');
+  }
 
   tulis('\n── SESI ──');
   const u = auth?.currentUser;
@@ -1315,6 +1327,14 @@ function subscribeMonth() {
     console.error('Listener bulan gagal:', err.code, err.message);
     showToast(jelaskanError(err), 'error');
     setSyncStatus('');
+    // Toast tidak muat memuat penyebabnya, dan menyuruh pengguna membuka alat
+    // diagnosa sendiri berarti penyebabnya tetap tak terlihat. Untuk penolakan
+    // izin — satu-satunya error yang butuh pemeriksaan berlapis — laporannya
+    // dibuka sendiri, sekali per sesi supaya tidak mengganggu.
+    if (err?.code === 'permission-denied' && !diagSudahTampil) {
+      diagSudahTampil = true;
+      runDiagnostics();
+    }
   };
 
   unsubIn = onSnapshot(qIn, snap => {
