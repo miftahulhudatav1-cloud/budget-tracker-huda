@@ -1126,7 +1126,7 @@ import {
 
 // Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
 // perangkat masih menjalankan versi lama dari cache service worker.
-const APP_BUILD = '2026-09-01-e';
+const APP_BUILD = '2026-09-01-f';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
@@ -2507,6 +2507,19 @@ function tambahHari(iso, n) {
   return tglISO(new Date(new Date(t + n * 86400000).toISOString().slice(0, 10) + 'T12:00:00'));
 }
 
+// Gerbang langganan HANYA berlaku ketika aplikasi benar-benar berjalan di
+// Firebase milik layanan. Siapa pun yang memakai Firebase sendiri — pemilik
+// aplikasi saat mengembangkan, atau pembeli yang memasang sendiri — tidak punya
+// siapa-siapa untuk ditagih, dan menguncinya hanya merusak tanpa memberi apa pun.
+//
+// Dipisah menjadi fungsi murni supaya bisa diuji tanpa localStorage.
+function modeLayanan(bawaanTerisi, projectBawaan, projectDipakai) {
+  return bawaanTerisi === true && !!projectDipakai && projectDipakai === projectBawaan;
+}
+function pakaiFirebaseLayanan() {
+  return modeLayanan(adaConfigBawaan(), CONFIG_BAWAAN.projectId, getConfig()?.projectId);
+}
+
 // Murni dan bisa diuji: tidak menyentuh jaringan, jam, maupun DOM.
 //   dibuatISO  — tanggal akun dibuat, 'YYYY-MM-DD'
 //   billing    — isi dokumen billing/{uid}, atau null bila belum ada
@@ -2539,6 +2552,11 @@ function hitungLangganan(dibuatISO, billing, hariIniISO) {
 // Kehilangan sedikit pendapatan jauh lebih ringan daripada memblokir orang yang
 // sudah membayar karena sesuatu di sisi kami.
 async function muatLangganan(user) {
+  if (!pakaiFirebaseLayanan()) {
+    langgananSaatIni = { status: 'aktif', sisaHari: Infinity, sampai: null };
+    tampilkanStatusLangganan();
+    return;
+  }
   const dibuat = user?.metadata?.creationTime
     ? tglISO(new Date(user.metadata.creationTime)) : null;
   let billing = null;
@@ -2589,7 +2607,10 @@ window.tutupLangganan = function() {
 // habis, mencatat dihentikan — tetapi membaca, mencari, mengekspor, dan membuat
 // cadangan tetap terbuka. Data itu milik mereka; menyanderanya tidak pantas dan
 // juga buruk untuk usaha ini.
-function bolehMencatat() { return langgananSaatIni.status !== 'kadaluarsa'; }
+function bolehMencatat() {
+  if (!pakaiFirebaseLayanan()) return true;
+  return langgananSaatIni.status !== 'kadaluarsa';
+}
 
 let langgananSaatIni = { status: 'trial', sisaHari: HARI_MASA_COBA, sampai: null };
 

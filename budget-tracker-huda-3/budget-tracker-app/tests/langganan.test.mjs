@@ -10,9 +10,9 @@ const a = html.indexOf('const HARI_MASA_COBA');
 // yang menyentuh DOM dan window — bagian itu tidak bisa dijalankan di Node.
 const b = html.indexOf('// Dibaca sekali saat login.');
 if (a === -1 || b === -1 || b <= a) { console.error('blok langganan tidak ditemukan'); process.exit(2); }
-const { hitungLangganan, HARI_MASA_COBA, tambahHari, selisihHari } = await import(
-  'data:text/javascript,' + encodeURIComponent(
-    html.slice(a, b) + '\nexport { hitungLangganan, HARI_MASA_COBA, tambahHari, selisihHari };'));
+const { hitungLangganan, HARI_MASA_COBA, tambahHari, selisihHari, modeLayanan } = await import(
+  'data:text/javascript,' + encodeURIComponent(html.slice(a, b) +
+    '\nexport { hitungLangganan, HARI_MASA_COBA, tambahHari, selisihHari, modeLayanan };'));
 
 let lulus = 0, gagal = 0;
 const cek = (nama, dapat, harap) => {
@@ -73,6 +73,22 @@ cek('billing.sampai ngawur diabaikan, jatuh ke masa coba',
 // akun yang menentukan. Ini alasan utama nilainya diambil dari Firebase Auth.
 cek('billing tidak bisa memperpanjang masa coba',
   hitungLangganan('2026-01-01', { sampai: '2020-01-01' }, '2026-09-01').status, 'kadaluarsa');
+
+// ── siapa yang kena gerbang ──────────────────────
+// Gerbangnya hanya boleh menyala di Firebase layanan. Ini bukan kehalusan:
+// tanpa penjagaan ini, pemilik aplikasi dan setiap pembeli yang memasang di
+// Firebase sendiri akan terkunci dari datanya sendiri begitu 14 hari lewat —
+// padahal tidak ada siapa pun yang menagih mereka.
+cek('config bawaan belum diisi → bukan mode layanan',
+  modeLayanan(false, 'ISI_PROJECT_ID', 'proyek-saya'), false);
+cek('memakai Firebase sendiri → bukan mode layanan',
+  modeLayanan(true, 'layanan-huda', 'proyek-saya'), false);
+cek('memakai Firebase layanan → mode layanan',
+  modeLayanan(true, 'layanan-huda', 'layanan-huda'), true);
+cek('project tidak terbaca → bukan mode layanan',
+  modeLayanan(true, 'layanan-huda', undefined), false);
+cek('dua project kosong tidak dianggap cocok',
+  modeLayanan(true, '', ''), false);
 
 console.log(`\n${lulus} lulus, ${gagal} gagal`);
 process.exit(gagal ? 1 : 0);
