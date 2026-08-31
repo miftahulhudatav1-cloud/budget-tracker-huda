@@ -1090,7 +1090,7 @@ import {
 
 // Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
 // perangkat masih menjalankan versi lama dari cache service worker.
-const APP_BUILD = '2026-09-01-b';
+const APP_BUILD = '2026-09-01-c';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
@@ -3147,7 +3147,14 @@ const POLA_TOTAL = [
   /\bjumlah\b/i,
 ];
 // Baris yang MIRIP total tapi bukan: uang diserahkan, kembalian, pajak, diskon.
-const POLA_BUKAN_TOTAL = /\b(tunai|cash|kembali(an)?|change|diskon|discount|hemat|potongan|subtotal|sub\s*total|ppn|pajak|tax|dpp|npwp|poin|point|saldo)\b/i;
+// Pola ditulis toleran terhadap kerusakan OCR. Pada struk sungguhan, "subtotal"
+// terbaca "subtota|" dan lolos dari pola yang menuntut ejaan utuh. Yang paling
+// berisiko adalah TUNAI: nominalnya bisa lebih besar dari total (uang yang
+// diserahkan), jadi kalau lolos, cadangan akan memilih angka itu.
+// Batang kata dipakai, bukan kata utuh — "subtot" tidak pernah muncul pada baris
+// total yang sah, jadi aman dilonggarkan. "bayar" sengaja TIDAK dimasukkan,
+// karena "TOTAL BAYAR" justru baris total yang benar.
+const POLA_BUKAN_TOTAL = /\b(tuna[il1|!]|cash|kembali|change|disko|discount|hemat|potongan|subtot|sub\s*tot|ppn|pajak|tax|dpp|npwp|poin|point|saldo)/i;
 
 function extractTotal(text) {
   const baris = text.split(/\r?\n/).map(b => b.trim()).filter(Boolean);

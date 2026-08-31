@@ -151,5 +151,55 @@ cek('kata Total rusak: cadangan tetap 109.000', hasilRusak.amount, 109000);
 cek('cadangan menolak nomor telepon',           hasilRusak.amount < 1e9, true);
 cek('ditandai sebagai tebakan',                 hasilRusak.ditebak, true);
 
+// ── keluaran OCR sungguhan ───────────────────────
+// Ini teks apa adanya dari Tesseract untuk struk di atas, difoto di atas batu
+// dengan cahaya seadanya. Tes paling berharga di berkas ini, karena bukan
+// karangan: kata "Total" hilang sepenuhnya, "Rounding" jadi "ding", "subtotal"
+// jadi "subtota|", dan latar batunya menyumbang sampah di tiap baris.
+const ocrAsli = `Da Ani ar
+Jalan desa, Sukakarya, KEC. Yegamendung. Kabupat 7 7 5 AA, :
+en Bogor, Jana Barat 16170, kab. Bogor, Jawa Bar HE 1 REA
+. at, 16110 AAA Ae 2 oh
+083140632957 PER, ARA 7
+Gucue No:6 7 5 7 7 : 7 7
+: 24 Agu 2026 1:51 7 7 7 Ai
+Receipt Numper 38005 5 Ep Ap 7
+p Bill Name 06 5 Np 7 5
+aah Collected By yunita Maida Ah 77 So
+Dine In 7 AA, 7 7
+Nasi Goreng Babat HOrti x Rp 40.000 2S AK aa
+pedas TE Aan
+Nasi Goreng Kecomprang sate..xX! Rp 55.000 Dee ES
+Pedas : SES
+subtota| Rp 35.000 SEE 5
+PB1(1OR) Rp 9.500
+Service Charge 54) Rp 4.150
+ding Amount (Rp 250) :
+Rp 109.000 Spare Pase
+Rp 109.000 SAE
+/U ?) : :`;
+
+const dariOCR = parseReceipt(ocrAsli);
+cek('OCR asli: nominal tetap 109.000', dariOCR.amount, 109000);
+cek('OCR asli: ditandai tebakan (kata Total hilang)', dariOCR.ditebak, true);
+cek('OCR asli: tanggal tetap terbaca', dariOCR.date, '2026-08-24');
+cek('OCR asli: kategori tertebak',     dariOCR.cat, 'Makanan');
+// Nomor telepon 083140632957 tidak punya pemisah ribuan, jadi tidak ikut
+cek('OCR asli: bukan nomor telepon', dariOCR.amount < 1e9, true);
+
+// Ejaan rusak yang lolos dari pola versi lama. Diuji lewat perilakunya, bukan
+// dengan menyalin ulang regexnya — salinan akan cepat berbeda dari aslinya.
+// TUNAI rusak yang paling berbahaya: nominalnya bisa melebihi total, jadi kalau
+// lolos, cadangan akan memilih uang yang diserahkan, bukan yang dibayar.
+cek('TUNA1 rusak tetap diabaikan',
+  parseReceipt('TOKO\nNASI Rp 30.000\nTUNA1 Rp 50.000').amount, 30000);
+cek('TUNAI utuh tetap diabaikan',
+  parseReceipt('TOKO\nNASI Rp 30.000\nTUNAI Rp 50.000').amount, 30000);
+cek('subtota| rusak tetap diabaikan',
+  parseReceipt('TOKO\nsubtota| Rp 90.000\nNASI Rp 30.000').amount, 30000);
+// Yang penting: pelonggaran ini tidak boleh ikut membuang baris total yang sah
+cek('TOTAL BAYAR tidak ikut terbuang',
+  parseReceipt('TOKO\nNASI Rp 30.000\nTOTAL BAYAR Rp 33.000').amount, 33000);
+
 console.log(`\n${lulus} lulus, ${gagal} gagal`);
 process.exit(gagal ? 1 : 0);
