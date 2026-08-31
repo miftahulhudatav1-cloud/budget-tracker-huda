@@ -683,7 +683,7 @@
 
   <div class="header">
     <div class="header-badge"><span></span> Cloud Sync Aktif</div>
-    <h1>Keuangan Huda</h1>
+    <h1 id="appTitle" onclick="ubahNama()" title="Ketuk untuk mengganti nama" style="cursor:pointer">Keuangan</h1>
     <div class="header-meta">
       <p>Pekerja &amp; Mahasiswa</p>
       <select class="year-select" id="yearSelect" onchange="switchYear(parseInt(this.value))"></select>
@@ -976,7 +976,7 @@
 <!-- Firebase SDK -->
 <script type="module">
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
-import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
+import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail, updateProfile } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
 import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
   collection, addDoc, deleteDoc, doc, getDoc, getDocs, setDoc, updateDoc,
@@ -985,7 +985,7 @@ import {
 
 // Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
 // perangkat masih menjalankan versi lama dari cache service worker.
-const APP_BUILD = '2026-08-31-e';
+const APP_BUILD = '2026-08-31-f';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
@@ -1141,8 +1141,9 @@ function startApp(cfg) {
         const emailEl = document.getElementById('userEmail');
         const avatar = document.getElementById('userAvatar');
         if(pill) pill.style.display = 'inline-flex';
-        if(emailEl) emailEl.textContent = user.email.split('@')[0];
-        if(avatar) avatar.textContent = user.email[0].toUpperCase();
+        if(emailEl) emailEl.textContent = (user.displayName || '').trim() || user.email.split('@')[0];
+        if(avatar) avatar.textContent = ((user.displayName || user.email)[0] || '?').toUpperCase();
+        terapkanNama();
         setTimeout(() => { try { buildUI(); } catch(e2) { console.error('buildUI error:', e2); } }, 100);
         cekTokenSesuaiProject(user);
       } else {
@@ -3078,6 +3079,37 @@ window.handleRestoreFile = function(event) {
 // ── AUTH FUNCTIONS ─────────────────────────────
 let authMode = 'login';
 
+// Nama tampilan dipakai di judul halaman dan judul tab. Nama peluncur aplikasi
+// (label di bawah ikon homescreen) TIDAK bisa diubah dari sini — itu dibaca dari
+// manifest.json saat aplikasi dipasang dan dikunci sejak saat itu.
+function namaTampilan() {
+  const u = auth?.currentUser;
+  if (!u) return '';
+  return (u.displayName || '').trim() || (u.email || '').split('@')[0] || '';
+}
+
+function terapkanNama() {
+  const nama = namaTampilan();
+  const h1 = document.getElementById('appTitle');
+  if (h1) h1.textContent = nama ? `Keuangan ${nama}` : 'Keuangan';
+  document.title = nama ? `Keuangan ${nama}` : 'Budget Tracker';
+}
+
+window.ubahNama = async function() {
+  const u = auth?.currentUser;
+  if (!u) return;
+  const baru = prompt('Nama yang ditampilkan di judul:', u.displayName || '');
+  if (baru === null) return;                       // dibatalkan
+  const bersih = baru.trim().slice(0, 40);
+  try {
+    await updateProfile(u, { displayName: bersih });
+    terapkanNama();
+    showToast(bersih ? `Nama diubah jadi "${bersih}".` : 'Nama dikosongkan.', 'success');
+  } catch (e) {
+    showToast('Gagal mengubah nama: ' + (e.code || e.message), 'error');
+  }
+};
+
 window.togglePassword = function() {
   const inp = document.getElementById('authPassword');
   const btn = document.getElementById('pwToggle');
@@ -3160,12 +3192,22 @@ window.submitAuth = async function() {
     const aksi = authMode === 'login'
       ? signInWithEmailAndPassword(auth, email, pass)
       : createUserWithEmailAndPassword(auth, email, pass);
-    await Promise.race([
+    const kredensial = await Promise.race([
       aksi,
       new Promise((_, tolak) => setTimeout(
         () => tolak(Object.assign(new Error('Tidak ada jawaban dari server.'), { code: 'app/timeout' })),
         20000))
     ]);
+
+    // Kolom "Nama" saat daftar selama ini diisi lalu dibuang — tidak pernah dibaca
+    // sama sekali. Sekarang disimpan sebagai displayName dan dipakai untuk judul.
+    if (authMode === 'register') {
+      const nama = document.getElementById('authName')?.value.trim();
+      if (nama && kredensial?.user) {
+        try { await updateProfile(kredensial.user, { displayName: nama.slice(0, 40) }); }
+        catch (e2) { console.warn('Nama gagal disimpan:', e2); }
+      }
+    }
     // onAuthStateChanged will handle the rest
   } catch(e) {
     const msgs = {
