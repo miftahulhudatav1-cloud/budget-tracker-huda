@@ -665,6 +665,12 @@
      di kedua sisi — justru pada pesan error yang paling perlu terbaca utuh. */
   .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(80px);background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:11px 18px;font-size:13px;font-weight:600;display:flex;align-items:center;gap:10px;z-index:999;transition:transform 0.4s cubic-bezier(.4,0,.2,1),opacity 0.4s;opacity:0;max-width:min(92vw,440px);text-align:center;line-height:1.5;word-break:break-word;}
   .toast.show{transform:translateX(-50%) translateY(0);opacity:1;}
+  .toast-aksi{
+    background:transparent;border:1px solid currentColor;color:inherit;
+    font:inherit;font-size:12px;font-weight:700;padding:3px 12px;border-radius:8px;
+    cursor:pointer;flex-shrink:0;
+  }
+  .toast-aksi:hover{background:rgba(255,255,255,0.1);}
   .toast.success{border-color:rgba(0,214,143,0.4);color:var(--green);}
   .toast.error{border-color:rgba(255,107,107,0.4);color:var(--red);}
 
@@ -1170,7 +1176,7 @@ import {
 
 // Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
 // perangkat masih menjalankan versi lama dari cache service worker.
-const APP_BUILD = '2026-09-01-v';
+const APP_BUILD = '2026-09-01-w';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
@@ -1877,13 +1883,15 @@ function subscribeMonth() {
 
   unsubIn = onSnapshot(qIn, snap => {
     initCache(currentYear);
-    cache[currentYear][month].in = snap.docs.map(d => ({id: d.id, ...d.data()})).sort(urutTanggalDesc);
+    cache[currentYear][month].in = snap.docs.map(d => ({id: d.id, ...d.data()}))
+      .filter(e => !idDitahan.has(e.id)).sort(urutTanggalDesc);
     render(); setSyncStatus('synced');
   }, onErr);
 
   unsubOut = onSnapshot(qOut, snap => {
     initCache(currentYear);
-    cache[currentYear][month].out = snap.docs.map(d => ({id: d.id, ...d.data()})).sort(urutTanggalDesc);
+    cache[currentYear][month].out = snap.docs.map(d => ({id: d.id, ...d.data()}))
+      .filter(e => !idDitahan.has(e.id)).sort(urutTanggalDesc);
     render(); setSyncStatus('synced');
   }, onErr);
 
@@ -2154,25 +2162,99 @@ window.saveEdit = async function() {
   }
 };
 
-window.deleteEntry = async function(type, id) {
+// ── HAPUS DENGAN URUNG ──
+// Dulu: confirm('Hapus entri ini?') lalu hilang selamanya, foto struknya ikut.
+// Dialog konfirmasi terbukti buruk sebagai pengaman — setelah beberapa kali ia
+// ditekan tanpa dibaca, dan di tabel layar sempit tombol edit dan hapus
+// bersebelahan serta kecil. Salah ketuk itu mudah, dan akibatnya permanen.
+//
+// Sekarang penghapusannya DITUNDA. Entri hilang dari tampilan seketika, tetapi
+// dokumennya baru benar-benar dihapus setelah jendela urung lewat. Selama itu,
+// tidak ada apa pun yang rusak bila pengguna berubah pikiran.
+const JEDA_URUNG_MS = 6000;
+// Dokumennya masih ada di Firestore selama ditunda, jadi onSnapshot akan
+// mengembalikannya ke tampilan. Id yang ditahan disaring di listener.
+const idDitahan = new Set();
+let hapusTertunda = null;   // { type, id, year, month, entri, timer }
+
+function komitHapus() {
+  const t = hapusTertunda;
+  if (!t) return;
+  clearTimeout(t.timer);
+  hapusTertunda = null;
+
+  const uid = currentUser?.uid;
+  if (!uid || !db) { idDitahan.delete(t.id); return; }
+
+  deleteDoc(sudahMigrasi()
+    ? doc(txCol(uid), t.id)
+    : doc(oldCol(uid, t.year, t.month, t.type), t.id))
+    .then(() => {
+      // Foto struk dihapus bersama entrinya, bukan lebih dulu — kalau tidak,
+      // mengurungkan penghapusan akan mengembalikan entri yang fotonya sudah
+      // hilang.
+      if (t.entri?.receiptId) {
+        deleteDoc(doc(db, `users/${uid}/receipts`, t.entri.receiptId))
+          .catch(e => console.error('Foto struk gagal dihapus:', e));
+      }
+    })
+    .catch(e => showToast('Gagal hapus: ' + e.message, 'error'))
+    // Dilepas setelah dokumennya benar-benar hilang. Melepas lebih awal membuat
+    // snapshot berikutnya memunculkannya kembali sesaat.
+    .finally(() => { idDitahan.delete(t.id); });
+}
+
+window.deleteEntry = function(type, id) {
+  if (!bolehMencatat()) { tampilkanGerbangLangganan(); return; }
+  // Hanya satu penghapusan yang boleh menggantung; yang sebelumnya dikunci
+  // sekarang juga, supaya urutannya tidak pernah ambigu.
+  komitHapus();
+
   const month = MONTHS[currentMonth];
-  if(!confirm('Hapus entri ini?')) return;
-  try {
-    const uid3 = uidAtau('Sesi belum siap — muat ulang halaman lalu coba lagi.');
-    if(!uid3) return;
-    // Ambil receiptId sebelum entrinya hilang, agar fotonya tidak tertinggal
-    // sebagai dokumen yatim sampai masa 7 hari habis.
-    const entri = cache[currentYear]?.[month]?.[type]?.find(x => x.id === id);
-    await deleteDoc(sudahMigrasi()
-      ? doc(txCol(uid3), id)
-      : doc(oldCol(uid3, currentYear, month, type), id));
-    if(entri?.receiptId) {
-      deleteDoc(doc(db, `users/${uid3}/receipts`, entri.receiptId))
-        .catch(e => console.error('Foto struk gagal dihapus:', e));
-    }
-    showToast('Dihapus','error');
-  } catch(e) { showToast('Gagal hapus: ' + e.message,'error'); }
+  const entri = cache[currentYear]?.[month]?.[type]?.find(x => x.id === id);
+  if (!entri) return;
+  if (String(id).startsWith('temp_')) {
+    showToast('Tunggu sebentar, entri ini masih tersimpan…', 'error');
+    return;
+  }
+
+  idDitahan.add(id);
+  cache[currentYear][month][type] = cache[currentYear][month][type].filter(x => x.id !== id);
+  renderFilteredTable(type);
+  render();
+
+  hapusTertunda = { type, id, year: currentYear, month, entri,
+                    timer: setTimeout(komitHapus, JEDA_URUNG_MS) };
+  showToastAksi(`"${(entri.desc || 'Entri').slice(0, 24)}" dihapus`, 'Urungkan',
+                urungkanHapus, JEDA_URUNG_MS);
 };
+
+function urungkanHapus() {
+  const t = hapusTertunda;
+  if (!t) return;
+  clearTimeout(t.timer);
+  hapusTertunda = null;
+  idDitahan.delete(t.id);
+
+  // Dimasukkan kembali ke cache agar langsung terlihat; snapshot berikutnya
+  // akan menimpanya dengan data dari server, yang isinya sama.
+  initCache(t.year);
+  const daftar = cache[t.year][t.month][t.type];
+  if (!daftar.some(x => x.id === t.id)) daftar.push(t.entri);
+  cache[t.year][t.month][t.type] = daftar.sort(urutTanggalDesc);
+  renderFilteredTable(t.type);
+  render();
+  showToast('Dikembalikan', 'success');
+}
+
+// Menutup tab atau berpindah aplikasi saat masih menggantung: penghapusan
+// dijalankan sekarang juga. Tanpa ini, entri yang sudah dihapus akan muncul
+// kembali saat aplikasi dibuka lagi — tidak ada data yang hilang, tetapi
+// membingungkan.
+window.addEventListener('pagehide', komitHapus);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') komitHapus();
+});
 
 // ── RENDER ─────────────────────────────────────
 // Kartu untuk layar sempit, tabel untuk yang lebar. Ambangnya dipakai di dua
@@ -2619,6 +2701,31 @@ window.showToast = function(msg, type='success') {
 };
 // alias for internal use
 function showToast(msg, type) { window.showToast(msg, type); }
+
+// Toast dengan satu tombol. Dipakai untuk urung-hapus: tombol di dalam toast
+// jauh lebih baik daripada dialog konfirmasi, karena ia muncul SETELAH tindakan
+// dan tidak menghalangi apa pun — dialog yang muncul sebelum tindakan akan
+// ditekan tanpa dibaca setelah beberapa kali.
+//
+// Teksnya disisipkan sebagai simpul teks, bukan innerHTML: isinya memuat
+// keterangan buatan pengguna.
+window.showToastAksi = function(pesan, labelAksi, aksi, ms) {
+  const t = document.getElementById('toast');
+  if (!t) return;
+  t.textContent = '';
+  t.append(pesan + ' ');
+  const btn = document.createElement('button');
+  btn.className = 'toast-aksi';
+  btn.textContent = labelAksi;
+  // Fungsinya dipasang langsung, bukan lewat nama di dalam string. Rujukan
+  // berupa string tidak akan gagal saat fungsinya diganti nama — ia hanya diam
+  // dan tombolnya berhenti bekerja.
+  btn.onclick = aksi;
+  t.appendChild(btn);
+  t.className = 'toast show';
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => t.classList.remove('show'), ms);
+};
 
 function animVal(id,value) {
   const el=document.getElementById(id);
