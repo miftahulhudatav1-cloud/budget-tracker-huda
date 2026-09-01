@@ -1148,7 +1148,7 @@ import {
 
 // Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
 // perangkat masih menjalankan versi lama dari cache service worker.
-const APP_BUILD = '2026-09-01-m';
+const APP_BUILD = '2026-09-01-n';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
@@ -3709,6 +3709,27 @@ const POLA_TOTAL = [
 // karena "TOTAL BAYAR" justru baris total yang benar.
 const POLA_BUKAN_TOTAL = /\b(tuna[il1|!]|cash|kembali|change|disko|discount|hemat|potongan|subtot|sub\s*tot|ppn|pajak|tax|dpp|npwp|poin|point|saldo)/i;
 
+// OCR kerap menyisipkan spasi DI DALAM angka: 'Rp.109,000' terbaca
+// 'Rp.109, 000', atau pemisahnya hilang sama sekali menjadi 'Rp.109 000'.
+// Tanpa disatukan lebih dulu, tokenisasi memecahnya menjadi '109' dan '000';
+// '000' ditolak karena di bawah seratus, sehingga yang tersisa hanya 109 — dan
+// totalnya menyusut seribu kali lipat tanpa satu pun tanda bahwa ada yang salah.
+//
+// Hanya dipakai pada baris yang SUDAH dikenali sebagai baris total. Di tempat
+// lain penggabungan seperti ini berbahaya: 'QTY 2 500' akan berubah menjadi
+// 2.500, dan tebakan cadangan justru memilih angka karangan itu.
+// Ditangkap sebagai SATU angka utuh lalu spasinya dibuang, bukan digabung
+// sepasang-sepasang. Menggabung sepasang membuat 'Rp 1 250 000' berhenti di
+// 1.250: setelah pasangan pertama disatukan, pemindaian melanjut dari sesudahnya
+// dan kelompok ketiga tidak pernah ikut. Pola ini juga membuat letak spasinya
+// tidak penting — sebelum pemisah, sesudahnya, atau menggantikannya.
+function satukanRibuan(baris) {
+  return String(baris).replace(
+    /\d{1,3}(?:\s*[.,]?\s*\d{3})+(?!\d)/g,
+    cocok => cocok.replace(/\s+/g, '')
+  );
+}
+
 function extractTotal(text) {
   const baris = text.split(/\r?\n/).map(b => b.trim()).filter(Boolean);
   for (const pola of POLA_TOTAL) {
@@ -3716,11 +3737,11 @@ function extractTotal(text) {
     for (let i = baris.length - 1; i >= 0; i--) {
       const b = baris[i];
       if (!pola.test(b) || POLA_BUKAN_TOTAL.test(b)) continue;
-      const nilai = (b.match(/[\d][\d.,]*/g) || []).map(parseRupiah).filter(n => n !== null);
+      const nilai = (satukanRibuan(b).match(/[\d][\d.,]*/g) || []).map(parseRupiah).filter(n => n !== null);
       if (nilai.length) return Math.max(...nilai);
       // Sebagian struk menaruh nominalnya di baris berikutnya.
       if (i + 1 < baris.length && !POLA_BUKAN_TOTAL.test(baris[i + 1])) {
-        const lanjut = (baris[i + 1].match(/[\d][\d.,]*/g) || []).map(parseRupiah).filter(n => n !== null);
+        const lanjut = (satukanRibuan(baris[i + 1]).match(/[\d][\d.,]*/g) || []).map(parseRupiah).filter(n => n !== null);
         if (lanjut.length) return Math.max(...lanjut);
       }
     }

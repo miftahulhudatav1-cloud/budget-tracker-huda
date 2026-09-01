@@ -249,5 +249,32 @@ cek('kata bukan-bulan tidak jadi tanggal',
 cek('nomor panjang tidak jadi tanggal',
   parseReceipt('TOKO\nREF.NO. 623611006103\nTOTAL 50.000').date, null);
 
+// ── angka yang terpecah spasi oleh OCR ───────────
+// Kasus nyata: struk BCA terbalik yang sudah berhasil diputar tegak tetap
+// menghasilkan Rp 109 alih-alih Rp 109.000. Baris TOTAL-nya ditemukan dengan
+// benar; yang rusak adalah angkanya — OCR menyisipkan spasi di dalamnya,
+// tokenisasi memecahnya jadi '109' dan '000', lalu '000' ditolak karena di
+// bawah seratus. Yang tersisa 109, dan tidak ada apa pun yang menandai bahwa
+// totalnya baru saja menyusut seribu kali lipat.
+cek('spasi sesudah koma disatukan',
+  parseReceipt('TOKO\nTOTAL      Rp.109, 000').amount, 109000);
+cek('spasi sesudah titik disatukan',
+  parseReceipt('TOKO\nTOTAL      Rp.109. 000').amount, 109000);
+cek('pemisah hilang, tersisa spasi',
+  parseReceipt('TOKO\nTOTAL      Rp 109 000').amount, 109000);
+cek('jutaan dengan dua spasi',
+  parseReceipt('TOKO\nTOTAL      Rp 1 250 000').amount, 1250000);
+cek('spasi sebelum koma juga',
+  parseReceipt('TOKO\nTOTAL      Rp.109 ,000').amount, 109000);
+
+// Penggabungan hanya berlaku di baris total. Kalau tidak, baris barang seperti
+// 'QTY 2 500' berubah jadi 2.500 dan tebakan cadangan memilih angka karangan.
+cek('baris barang tidak ikut digabung saat menebak',
+  parseReceipt('TOKO\nNASI GORENG QTY 2 500\nBAYAR 30.000').amount, 30000);
+cek('angka utuh tidak berubah',
+  parseReceipt('TOKO\nTOTAL 109.000').amount, 109000);
+cek('kelompok dua digit tidak ikut digabung',
+  parseReceipt('TOKO\nTOTAL 24 AUG,26 11:51 Rp 50.000').amount, 50000);
+
 console.log(`\n${lulus} lulus, ${gagal} gagal`);
 process.exit(gagal ? 1 : 0);
