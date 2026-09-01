@@ -236,7 +236,6 @@
   body.light .tbl td{border-bottom-color:rgba(0,0,0,0.05);}
   body.light .month-btn{background:#FFFFFF;}
   body.light .tab-btn{background:#FFFFFF;}
-  body.light .entry-card{background:#F8FAFC;}
 
   .theme-toggle {
     background:none; border:1px solid var(--border);
@@ -512,6 +511,20 @@
      supaya header dan bilah filter tetap diam di tempatnya. */
   #inTableWrap, #outTableWrap{overflow-x:auto;}
   .tbl{width:100%;border-collapse:collapse;font-size:12px;}
+  /* Kolom nomor: selebar isinya saja, rata kanan supaya angka satuan dan
+     puluhan tetap sejajar, dan diredupkan karena ia penunjuk posisi — bukan
+     data yang perlu bersaing dengan keterangan dan nominal. */
+  .tbl .sel-no{width:1%;white-space:nowrap;text-align:right;font-family:var(--mono);
+    font-size:11px;color:var(--text-muted);}
+  .tbl-ringkas td,.tbl-ringkas th{padding:9px 10px;}
+  .sel-utama{font-size:13px;font-weight:600;line-height:1.35;}
+  .sel-meta{font-size:11px;color:var(--text-muted);margin-top:3px;line-height:1.45;}
+  .tbl .sel-jumlah{text-align:right;white-space:nowrap;font-weight:700;}
+  .tbl .sel-aksi{width:1%;white-space:nowrap;text-align:right;padding-left:0;}
+  .tbl-ringkas tfoot td{background:var(--surface2);border-top:1px solid var(--border);
+    border-bottom:none;font-size:11px;font-weight:700;color:var(--text-muted);
+    text-transform:uppercase;letter-spacing:0.07em;}
+  .tbl-ringkas tfoot .sel-jumlah{font-size:14px;text-transform:none;letter-spacing:0;}
   .tbl th{text-align:left;padding:9px 12px;font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-muted);background:var(--surface2);border-bottom:1px solid var(--border);}
   .tbl td{padding:10px 12px;border-bottom:1px solid rgba(255,255,255,0.04);vertical-align:middle;}
   .tbl tr:last-child td{border-bottom:none;}
@@ -1133,7 +1146,7 @@ import {
 
 // Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
 // perangkat masih menjalankan versi lama dari cache service worker.
-const APP_BUILD = '2026-09-01-k';
+const APP_BUILD = '2026-09-01-l';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
@@ -2313,31 +2326,45 @@ function renderTable(type, entries, total, isFiltered=false) {
   const isMobile = layarSempit();
 
   if(isMobile) {
-    // ── MOBILE: Card layout ──────────────────────
-    const cards = entries.map((e,i) => `
-      <div class="entry-card ${isIn?'entry-in':'entry-out'} ${i===0?'new-row':''}">
-        <div class="entry-info">
-          <div class="entry-desc">${highlight(e.desc)}${receiptTag(e)}</div>
-          <div class="entry-meta">
-            ${esc(e.date)||'—'}${labelBulan(e)} · <span style="color:${isIn?'var(--green)':'var(--red)'}">${esc(e.cat)||'—'}</span>
-            ${!isIn && e.method ? ' · '+esc(e.method) : ''}
-          </div>
-        </div>
-        <span class="entry-amount ${isIn?'in':'out'}">${fmt(e.amount)}</span>
-        <button class="entry-edit" onclick="editEntry('${type}','${esc(e.id)}')" title="Edit">✎</button>
-        <button class="entry-del" onclick="deleteEntry('${type}','${esc(e.id)}')" title="Hapus">✕</button>
-      </div>`).join('');
+    // ── LAYAR SEMPIT: tabel ringkas bernomor ─────
+    // Dulu berupa kartu — tetapi .entry-card/.entry-list/.entry-desc/.entry-meta
+    // tidak pernah punya satu pun aturan CSS, jadi yang tampil hanyalah div polos
+    // bertumpuk tanpa padding maupun garis pemisah.
+    //
+    // Tanggal, kategori, dan metode ditumpuk di bawah keterangan, bukan diberi
+    // kolom sendiri: di layar 360px lima kolom membuat nominal terdesak sampai
+    // terpotong, dan justru nominal itu yang paling sering dicari mata.
+    const rows = entries.map((e,i) => `
+      <tr class="${i===0?'new-row':''}">
+        <td class="sel-no">${i+1}</td>
+        <td>
+          <div class="sel-utama">${highlight(e.desc)}${receiptTag(e)}</div>
+          <div class="sel-meta">${esc(e.date)||'—'}${labelBulan(e)} · <span style="color:${isIn?'var(--green)':'var(--red)'}">${esc(e.cat)||'—'}</span>${!isIn && e.method ? ' · '+esc(e.method) : ''}</div>
+        </td>
+        <td class="sel-jumlah ${isIn?'amount-in':'amount-out'}">${fmt(e.amount)}</td>
+        <td class="sel-aksi">
+          <button class="entry-edit" onclick="editEntry('${type}','${esc(e.id)}')" title="Edit">✎</button>
+          <button class="entry-del" onclick="deleteEntry('${type}','${esc(e.id)}')" title="Hapus">✕</button>
+        </td>
+      </tr>`).join('');
 
-    wrap.innerHTML = `
-      <div class="entry-list">${cards}</div>
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 14px;background:var(--surface2);border-top:1px solid var(--border);">
-        <span style="font-size:11px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.07em;">Total ${isIn?'Pemasukan':'Pengeluaran'}</span>
-        <span class="${isIn?'amount-in':'amount-out'}" style="font-size:15px;font-weight:700;">${fmt(total)}</span>
-      </div>`;
+    wrap.innerHTML = `<table class="tbl tbl-ringkas">
+      <thead><tr>
+        <th class="sel-no">No</th><th>Keterangan</th>
+        <th class="sel-jumlah">Jumlah</th><th></th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+      <tfoot><tr>
+        <td colspan="2">Total ${isIn?'Pemasukan':'Pengeluaran'}</td>
+        <td class="sel-jumlah ${isIn?'amount-in':'amount-out'}">${fmt(total)}</td>
+        <td></td>
+      </tr></tfoot>
+    </table>`;
   } else {
     // ── DESKTOP: Table layout ────────────────────
     const rows = entries.map((e,i) => `
       <tr class="${i===0?'new-row':''}">
+        <td class="sel-no">${i+1}</td>
         <td>${esc(e.date)||'—'}${labelBulan(e)}</td><td>${highlight(e.desc)}${receiptTag(e)}</td>
         <td><span class="badge ${isIn?'badge-green':'badge-red'}">${esc(e.cat)||'—'}</span></td>
         <td><span class="badge badge-blue">${esc(e.type)||'—'}</span></td>
@@ -2349,12 +2376,13 @@ function renderTable(type, entries, total, isFiltered=false) {
         </td>
       </tr>`).join('');
     wrap.innerHTML=`<table class="tbl"><thead><tr>
+      <th class="sel-no">No</th>
       <th>Tanggal</th><th>Keterangan</th><th>Kategori</th><th>Jenis</th>
       ${!isIn?'<th>Metode</th>':''}
       <th>Jumlah</th><th></th></tr></thead>
       <tbody>${rows}</tbody>
       <tfoot><tr style="background:var(--surface2)">
-        <td colspan="${isIn?4:5}" style="font-weight:700;font-size:11px;padding:11px 12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.07em;">Total</td>
+        <td colspan="${isIn?5:6}" style="font-weight:700;font-size:11px;padding:11px 12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.07em;">Total</td>
         <td class="${isIn?'amount-in':'amount-out'}" style="font-weight:700;font-size:13px;padding:11px 12px;">${fmt(total)}</td>
         <td></td></tr></tfoot></table>`;
   }
