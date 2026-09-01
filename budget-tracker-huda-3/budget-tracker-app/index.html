@@ -504,6 +504,13 @@
   .table-header{display:flex;align-items:center;justify-content:space-between;padding:13px 16px;border-bottom:1px solid var(--border);}
   .table-title{font-size:13px;font-weight:700;}
   .table-count{font-family:var(--mono);font-size:11px;color:var(--text-muted);background:var(--surface2);padding:3px 10px;border-radius:99px;}
+  /* Tabel desktop punya sampai tujuh kolom. Di jendela sempit ia lebih lebar
+     dari wadahnya, dan .table-wrap memakai overflow:hidden — jadi kolom paling
+     kanan (nominal dan tombol hapus) TERPOTONG tanpa cara apa pun untuk
+     melihatnya, karena body juga memakai overflow-x:hidden sehingga tidak ada
+     bilah gulir yang muncul. Digulirkan di sini saja, bukan di .table-wrap,
+     supaya header dan bilah filter tetap diam di tempatnya. */
+  #inTableWrap, #outTableWrap{overflow-x:auto;}
   .tbl{width:100%;border-collapse:collapse;font-size:12px;}
   .tbl th{text-align:left;padding:9px 12px;font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-muted);background:var(--surface2);border-bottom:1px solid var(--border);}
   .tbl td{padding:10px 12px;border-bottom:1px solid rgba(255,255,255,0.04);vertical-align:middle;}
@@ -1126,7 +1133,7 @@ import {
 
 // Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
 // perangkat masih menjalankan versi lama dari cache service worker.
-const APP_BUILD = '2026-09-01-j';
+const APP_BUILD = '2026-09-01-k';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
@@ -2111,6 +2118,31 @@ window.deleteEntry = async function(type, id) {
 };
 
 // ── RENDER ─────────────────────────────────────
+// Kartu untuk layar sempit, tabel untuk yang lebar. Ambangnya dipakai di dua
+// tempat — saat merender dan saat ukuran jendela berubah — jadi disimpan di satu
+// tempat agar keduanya tidak bisa berbeda diam-diam.
+const LEBAR_KARTU = 640;
+function layarSempit() { return window.innerWidth < LEBAR_KARTU; }
+
+// Tata letaknya ditentukan sekali saat render, sehingga memutar layar atau
+// mengubah ukuran jendela tidak mengubah apa pun sampai ada render berikutnya —
+// tabel bertahan di layar yang sudah menyempit, dan sebaliknya.
+//
+// Hanya bereaksi ketika ambangnya benar-benar terlampaui. Di Android membuka
+// papan ketik ikut memicu resize, dan merender ulang di tiap kejadian itu sia-sia
+// sekaligus bisa merebut fokus dari kolom yang sedang diketik.
+let modeSempitTerakhir = layarSempit();
+let jedaResize = null;
+window.addEventListener('resize', () => {
+  clearTimeout(jedaResize);
+  jedaResize = setTimeout(() => {
+    const sempit = layarSempit();
+    if (sempit === modeSempitTerakhir) return;
+    modeSempitTerakhir = sempit;
+    if (currentUser) render();
+  }, 150);
+});
+
 function render() {
   const month = MONTHS[currentMonth];
   initCache(currentYear);
@@ -2278,7 +2310,7 @@ function renderTable(type, entries, total, isFiltered=false) {
     return;
   }
   const isIn = type==='in';
-  const isMobile = window.innerWidth < 640;
+  const isMobile = layarSempit();
 
   if(isMobile) {
     // ── MOBILE: Card layout ──────────────────────
@@ -4725,6 +4757,14 @@ window.logoutUser = async function() {
   settingsCache = { recurring: [], budgetLimits: {}, migratedV2: false, fcmToken: '', fcmVapid: '', tz: '' };
   bacaDariModelBaru = false;
   rutinSudahDicek = false;
+  // Status langganan juga milik akun. muatLangganan() berjalan asinkron setelah
+  // login, jadi tanpa pengosongan ini akun berikutnya di perangkat yang sama
+  // memakai status akun sebelumnya selama beberapa saat — bisa terkunci padahal
+  // masih dalam masa coba, atau sebaliknya bisa mencatat padahal sudah habis.
+  langgananSaatIni = { status: 'trial', sisaHari: HARI_MASA_COBA, sampai: null };
+  // Pembersihan struk kedaluwarsa dibatasi sekali per sesi. Tanpa dikembalikan,
+  // akun berikutnya di perangkat ini tidak pernah dibersihkan.
+  receiptsPurged = false;
   if(unsubIn) unsubIn();
   if(unsubOut) unsubOut();
   document.getElementById('mainApp').style.display = 'none';
