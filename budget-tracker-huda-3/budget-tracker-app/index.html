@@ -412,6 +412,12 @@
   }
   .scan-btn:hover:not(:disabled){filter:brightness(1.15);transform:translateY(-1px);}
   .scan-btn:disabled{opacity:0.6;cursor:progress;transform:none;}
+  /* Upload adalah jalan kedua ke hal yang sama, bukan tindakan yang setara —
+     dibuat lebih tenang supaya mata tetap jatuh ke Scan Struk lebih dulu. */
+  .scan-btn.sekunder{
+    background:transparent;border-color:var(--border);color:var(--text-muted);
+  }
+  .scan-btn.sekunder:hover:not(:disabled){color:var(--text);border-color:var(--text-muted);}
   .scan-hint{font-size:11px;color:var(--text-muted);}
   .scan-preview{
     display:flex;align-items:center;gap:12px;margin-bottom:16px;padding:10px 12px;
@@ -993,11 +999,23 @@
         <button class="scan-btn" id="scanBtn" onclick="document.getElementById('scanInput').click()">
           Scan Struk
         </button>
-        <span class="scan-hint" id="scanHint">Foto struknya — nominal &amp; tanggal diisi otomatis</span>
+        <button class="scan-btn sekunder" id="uploadBtn" onclick="document.getElementById('uploadInput').click()">
+          Upload
+        </button>
+        <span class="scan-hint" id="scanHint">Foto atau upload struknya — nominal &amp; tanggal diisi otomatis</span>
       </div>
-      <!-- capture="environment" membuka kamera belakang langsung di HP -->
+      <!-- Dua input untuk satu penanganan yang sama. Bedanya hanya
+           capture="environment", yang membuka kamera belakang langsung di HP;
+           tanpa atribut itu, yang terbuka galeri atau berkas. Satu input tidak
+           bisa melakukan keduanya — begitu capture dipasang, sebagian HP tidak
+           lagi menawarkan pilihan galeri sama sekali.
+           Daftar accept sengaja dibatasi ke format yang benar-benar bisa
+           didekode; membiarkan image/* membuat berkas HEIC dari iPhone bisa
+           dipilih lalu gagal dengan pesan yang tidak menjelaskan apa-apa. -->
       <input type="file" id="scanInput" accept="image/jpeg,image/png,image/webp"
              capture="environment" style="display:none" onchange="handleReceiptFile(event)">
+      <input type="file" id="uploadInput" accept="image/jpeg,image/png,image/webp"
+             style="display:none" onchange="handleReceiptFile(event)">
       <div class="scan-preview" id="scanPreview" style="display:none">
         <img id="scanThumb" alt="Pratinjau struk">
         <div class="scan-preview-info">
@@ -1148,7 +1166,7 @@ import {
 
 // Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
 // perangkat masih menjalankan versi lama dari cache service worker.
-const APP_BUILD = '2026-09-01-s';
+const APP_BUILD = '2026-09-01-t';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
@@ -3612,9 +3630,13 @@ window.handleReceiptFile = async function(event) {
   event.target.value = '';           // agar memilih file yang sama lagi tetap memicu onchange
   if (!file) return;
 
-  const btn  = document.getElementById('scanBtn');
-  const hint = document.getElementById('scanHint');
+  const btn    = document.getElementById('scanBtn');
+  const btnUp  = document.getElementById('uploadBtn');
+  const hint   = document.getElementById('scanHint');
+  // Keduanya dikunci: keduanya memulai pekerjaan yang sama, dan menjalankan dua
+  // pembacaan sekaligus membuat hasil yang belakangan menimpa yang duluan.
   btn.disabled = true;
+  if (btnUp) btnUp.disabled = true;
   btn.textContent = '⏳ Membaca struk…';
   hint.textContent = 'Biasanya 5–15 detik';
 
@@ -3673,8 +3695,9 @@ window.handleReceiptFile = async function(event) {
     showToast('Gagal membaca struk: ' + e.message, 'error');
   } finally {
     btn.disabled = false;
+    if (btnUp) btnUp.disabled = false;
     btn.textContent = 'Scan Struk';
-    hint.textContent = 'Foto struknya — nominal & tanggal diisi otomatis';
+    hint.textContent = 'Foto atau upload struknya — nominal & tanggal diisi otomatis';
   }
 };
 
