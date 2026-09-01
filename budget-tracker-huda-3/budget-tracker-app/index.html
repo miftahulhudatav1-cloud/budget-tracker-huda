@@ -1223,7 +1223,7 @@ import {
 
 // Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
 // perangkat masih menjalankan versi lama dari cache service worker.
-const APP_BUILD = '2026-09-01-y';
+const APP_BUILD = '2026-09-01-z';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
@@ -1294,7 +1294,15 @@ function adaConfigBawaan() {
 function getConfig() {
   try {
     const simpanan = JSON.parse(localStorage.getItem('fbConfig'));
-    if (simpanan?.apiKey) return simpanan;
+    // Dibersihkan saat DIBACA, bukan hanya saat disimpan.
+    //
+    // Config yang tersimpan bisa berasal dari versi aplikasi yang lebih lama,
+    // atau dari jalur yang menulis ulang seluruh objek tanpa membersihkannya
+    // (pengisian messagingSenderId melakukan itu). Sekali sebuah nilai kotor
+    // masuk — misalnya authDomain yang masih membawa "https://" — ia menetap
+    // di perangkat itu selamanya, karena tidak ada satu pun jalur yang
+    // memeriksanya lagi. Membersihkan di sini membuatnya pulih sendiri.
+    if (simpanan?.apiKey) return bersihkanConfig(simpanan);
   } catch {}
   return adaConfigBawaan() ? bawaanBersih() : null;
 }
@@ -1713,9 +1721,12 @@ window.runDiagnostics = async function() {
   tulis('email : ' + u.email);
 
   tulis('\n── TOKEN ──');
+  // Di luar blok try: bagian UJI AKSES di bawah memakainya untuk membedakan
+  // config yang tercampur dari project yang memang salah.
+  let payloadToken = null;
   try {
     const token = await u.getIdToken(true);   // paksa refresh agar bukan token basi
-    const p = decodeJwtPayload(token);
+    const p = payloadToken = decodeJwtPayload(token);
     if (!p) { tulis('Token tidak bisa dibaca.'); }
     else {
       tulis('aud (project token) : ' + p.aud);
@@ -1744,9 +1755,29 @@ window.runDiagnostics = async function() {
     ['baca koleksi bulan ini', () => getDocs(collection(db, `users/${u.uid}/${currentYear}_${month}_in`))],
     ['query + orderBy(date)',  () => getDocs(query(collection(db, `users/${u.uid}/${currentYear}_${month}_in`), orderBy('date','desc')))],
   ];
+  let ditolakSemua = true;
   for (const [nama, fn] of uji) {
-    try { await fn(); tulis(nama.padEnd(24) + ': OK'); }
-    catch (e) { tulis(nama.padEnd(24) + ': GAGAL — ' + (e.code || e.message)); }
+    try { await fn(); tulis(nama.padEnd(24) + ': OK'); ditolakSemua = false; }
+    catch (e) {
+      tulis(nama.padEnd(24) + ': GAGAL — ' + (e.code || e.message));
+      if (e.code !== 'permission-denied') ditolakSemua = false;
+    }
+  }
+
+  // Semua ditolak, padahal token dan config menunjuk project yang SAMA.
+  //
+  // Ini berbeda dari kasus config tercampur, dan pembedanya penting: di sana
+  // yang salah adalah nilainya, di sini nilainya konsisten dan yang salah
+  // adalah PROJECT-nya — entah rules-nya belum dipasang, atau memang project
+  // yang dituju bukan tempat datanya. Tanpa dibedakan, keduanya terbaca sama
+  // dan menuntun ke perbaikan yang keliru: mengutak-atik rules yang sebenarnya
+  // sudah benar, di project yang sebenarnya salah.
+  if (ditolakSemua && cfg?.projectId && payloadToken?.aud === cfg.projectId) {
+    tulis('\n>>> Config dan token KONSISTEN menunjuk "' + cfg.projectId + '".');
+    tulis('    Jadi penolakan ini bukan salah ketik config, melainkan salah satu dari:');
+    tulis('    1. Firestore rules di project itu belum dipasang, atau');
+    tulis('    2. project itu memang bukan tempat datamu berada.');
+    tulis('    Periksa dulu nomor 2 — datanya tidak hilang, hanya tidak di sini.');
   }
 
   tulis('\nwaktu HP : ' + new Date().toString());

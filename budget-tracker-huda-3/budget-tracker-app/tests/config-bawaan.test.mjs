@@ -45,5 +45,48 @@ bawaanBersih().apiKey = 'diubah';
 cek('CONFIG_BAWAAN tidak ikut berubah',
   String(CONFIG_BAWAAN.apiKey).startsWith('ISI_'), true);
 
+// ── pembersihan config tersimpan ─────────────────
+// Config kotor yang sudah masuk localStorage dulu MENETAP di perangkat itu
+// selamanya: pembersihan hanya berjalan saat menyimpan, dan tidak ada satu pun
+// jalur yang memeriksanya lagi saat membaca. Pengisian messagingSenderId
+// bahkan menulis ulang seluruh objek apa adanya. Diagnosa di HP pemilik
+// menunjukkan authDomain masih membawa "https://" berhari-hari sesudahnya.
+const ab = html.indexOf('function bersihkanConfig(');
+const bb = html.indexOf('window.tempelConfig');
+const { bersihkanConfig } = await import(
+  'data:text/javascript,' + encodeURIComponent(
+    html.slice(ab, bb) + '\nexport { bersihkanConfig };'));
+
+const rapi = {
+  apiKey: 'AIzaSyD-contoh', authDomain: 'proyek.firebaseapp.com',
+  projectId: 'proyek', appId: '1:123:web:abc', messagingSenderId: '123456789',
+};
+cek('config rapi tidak berubah', bersihkanConfig(rapi), rapi);
+
+cek('https:// di authDomain dibuang',
+  bersihkanConfig({ ...rapi, authDomain: 'https://proyek.firebaseapp.com' }).authDomain,
+  'proyek.firebaseapp.com');
+cek('http:// juga dibuang',
+  bersihkanConfig({ ...rapi, authDomain: 'http://proyek.firebaseapp.com' }).authDomain,
+  'proyek.firebaseapp.com');
+cek('jalur di belakang domain dibuang',
+  bersihkanConfig({ ...rapi, authDomain: 'proyek.firebaseapp.com/__/auth' }).authDomain,
+  'proyek.firebaseapp.com');
+
+// Menyalin dari blok firebaseConfig ikut membawa tanda kutip dan koma.
+cek('tanda kutip di ujung dibuang',
+  bersihkanConfig({ ...rapi, apiKey: '"AIzaSyD-contoh"' }).apiKey, 'AIzaSyD-contoh');
+cek('koma di ujung dibuang',
+  bersihkanConfig({ ...rapi, projectId: 'proyek",' }).projectId, 'proyek');
+cek('spasi di ujung dibuang',
+  bersihkanConfig({ ...rapi, appId: '  1:123:web:abc  ' }).appId, '1:123:web:abc');
+
+// Nilai yang hilang tidak boleh jadi "undefined" sebagai teks.
+cek('field kosong jadi string kosong',
+  bersihkanConfig({}).apiKey, '');
+cek('objek kosong tetap punya kelima kunci',
+  Object.keys(bersihkanConfig({})).sort(),
+  ['apiKey','appId','authDomain','messagingSenderId','projectId']);
+
 console.log(`\n${lulus} lulus, ${gagal} gagal`);
 process.exit(gagal ? 1 : 0);
