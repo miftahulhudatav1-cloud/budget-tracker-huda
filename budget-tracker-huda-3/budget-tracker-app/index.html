@@ -1126,12 +1126,19 @@ import {
 
 // Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
 // perangkat masih menjalankan versi lama dari cache service worker.
-const APP_BUILD = '2026-09-01-i';
+const APP_BUILD = '2026-09-01-j';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
 // Rentang tahun yang tersedia di dropdown & dicakup backup: 2 tahun ke belakang, 8 ke depan.
-function yearRange() { return Array.from({length:11}, (_, i) => THIS_YEAR - 2 + i); }
+// Rentang bawaan ditambah setiap tahun yang benar-benar sudah punya data di
+// cache. Tanpa penggabungan itu, data di luar rentang tetap tersimpan tapi tidak
+// pernah bisa dijangkau lewat navigasi — ada, tapi tak terlihat.
+function yearRange() {
+  const dasar = Array.from({length:11}, (_, i) => THIS_YEAR - 2 + i);
+  const dariCache = Object.keys(cache).map(Number).filter(Number.isFinite);
+  return [...new Set([...dasar, ...dariCache, currentYear])].sort((a, b) => a - b);
+}
 let db, auth, currentUser = null, currentMonth = new Date().getMonth(), currentTab = 'in', currentYear = THIS_YEAR;
 let unsubIn = null, unsubOut = null;
 
@@ -1167,8 +1174,21 @@ const CONFIG_BAWAAN = {
   appId:             'ISI_APP_ID',
   messagingSenderId: 'ISI_SENDER_ID',
 };
+// Placeholder yang belum diganti diubah menjadi kosong, bukan dibiarkan lewat
+// sebagai nilai yang tampak sah. Tanpa ini, mengisi apiKey tapi lupa
+// messagingSenderId membuat mode layanan menyala dengan 'ISI_SENDER_ID' yang
+// dianggap terisi — dan notifikasi gagal dengan pesan yang tidak menunjuk ke
+// sebab sebenarnya. Kosong setidaknya memicu jalur "belum diisi" yang jujur.
+function bawaanBersih() {
+  const keluar = {};
+  for (const [k, v] of Object.entries(CONFIG_BAWAAN)) {
+    keluar[k] = String(v).startsWith('ISI_') ? '' : v;
+  }
+  return keluar;
+}
 function adaConfigBawaan() {
-  return !String(CONFIG_BAWAAN.apiKey).startsWith('ISI_');
+  const c = bawaanBersih();
+  return !!(c.apiKey && c.authDomain && c.projectId && c.appId);
 }
 
 // localStorage menang atas bawaan. Itu yang membuat tautan #cfg= dan layar setup
@@ -1179,7 +1199,7 @@ function getConfig() {
     const simpanan = JSON.parse(localStorage.getItem('fbConfig'));
     if (simpanan?.apiKey) return simpanan;
   } catch {}
-  return adaConfigBawaan() ? { ...CONFIG_BAWAAN } : null;
+  return adaConfigBawaan() ? bawaanBersih() : null;
 }
 
 // Mengetik empat nilai di HP rawan: autofill mengembalikan nilai lama, dan orang
@@ -2022,6 +2042,14 @@ window.saveEdit = async function() {
     const tujuanBaru = periodeDariTanggal(data.date);
     const pindah = tujuanBaru &&
       (tujuanBaru.year !== editing.year || MONTHS[tujuanBaru.monthIdx] !== editing.month);
+
+    // Tahun di luar jangkauan navigasi hampir selalu salah ketik — 2062 alih-alih
+    // 2026. Memindahkannya ke sana berarti entri itu tetap tersimpan tapi tidak
+    // pernah bisa dibuka lagi. Lebih baik ditolak sekarang, selagi jelas apa yang
+    // sedang terjadi, daripada hilang diam-diam.
+    if (pindah && !yearRange().includes(tujuanBaru.year)) {
+      throw new Error(`Tahun ${tujuanBaru.year} di luar jangkauan. Periksa lagi tanggalnya.`);
+    }
 
     if (!pindah) {
       // updateDoc, bukan setDoc: field lain seperti createdAt dan receiptId harus
@@ -3768,9 +3796,21 @@ async function purgeExpiredReceipts() {
   const uid = currentUser?.uid;
   if (!uid || !db) return;
   try {
-    const snap = await getDocs(collection(db, `users/${uid}/receipts`));
+    // Disaring di server, bukan setelah diunduh. Setiap dokumen struk memuat
+    // fotonya sebagai base64 (ratusan kilobyte), jadi membaca seluruh koleksi
+    // hanya untuk memeriksa tanggal kedaluwarsa berarti mengunduh SEMUA foto
+    // seminggu terakhir setiap kali aplikasi dibuka — di kuota HP pengguna.
+    // where() pada satu field memakai index otomatis, tidak perlu index gabungan.
+    //
+    // Catatan: Firestore MENGECUALIKAN dokumen yang tidak punya field itu dari
+    // query rentang. Jadi struk tanpa expiresAt tidak akan pernah terhapus di
+    // sini. Saat ini aman — savePendingReceipt selalu mengisinya — tetapi bila
+    // suatu saat ada jalur lain yang membuat struk, jalur itu WAJIB mengisi
+    // expiresAt, atau dokumennya akan menetap selamanya dan terus dibayar.
     const now = Date.now();
-    const basi = snap.docs.filter(d => (d.data().expiresAt ?? 0) < now);
+    const snap = await getDocs(query(
+      collection(db, `users/${uid}/receipts`), where('expiresAt', '<', now)));
+    const basi = snap.docs;
     if (!basi.length) return;
     await Promise.all(basi.map(d => deleteDoc(doc(db, `users/${uid}/receipts`, d.id))));
     console.info(`${basi.length} foto struk kedaluwarsa dihapus.`);
