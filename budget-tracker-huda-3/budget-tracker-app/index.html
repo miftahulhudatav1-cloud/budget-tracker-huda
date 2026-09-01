@@ -593,6 +593,16 @@
     padding:6px;border-radius:7px;transition:all 0.15s;line-height:1;flex-shrink:0;color:var(--text-muted);}
   .entry-del:hover{color:var(--red);background:var(--red-dim);}
   .entry-edit:hover{color:var(--blue);background:var(--blue-dim);}
+  /* Panduan untuk pengguna yang benar-benar baru. Ringkas dengan sengaja:
+     tiga langkah yang masing-masing menunjuk sesuatu yang ADA di layar ini,
+     bukan penjelasan fitur. Ia hilang sendiri begitu entri pertama masuk. */
+  .panduan-mulai{padding:22px 20px;color:var(--text-dim);}
+  .panduan-judul{font-size:14px;font-weight:800;color:var(--text);margin-bottom:12px;}
+  .panduan-mulai ol{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:9px;}
+  .panduan-mulai li{font-size:13px;line-height:1.6;}
+  .panduan-mulai b{color:var(--text);font-weight:700;}
+  .panduan-kaki{margin-top:14px;padding-top:12px;border-top:1px solid var(--border);
+    font-size:11px;color:var(--text-muted);line-height:1.6;}
   .empty-state{text-align:center;padding:36px 20px;color:var(--text-muted);}
   .empty-state .icon{font-size:28px;margin-bottom:8px;opacity:0.4;}
   .empty-state p{font-size:13px;}
@@ -1176,7 +1186,7 @@ import {
 
 // Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
 // perangkat masih menjalankan versi lama dari cache service worker.
-const APP_BUILD = '2026-09-01-w';
+const APP_BUILD = '2026-09-01-x';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
@@ -2439,12 +2449,51 @@ function renderFilteredTable(type) {
   renderTable(type, filtered, total, isFiltered);
 }
 
+// Pengguna yang benar-benar baru vs bulan yang kebetulan kosong.
+//
+// Keduanya menampilkan "Belum ada pengeluaran bulan ini", tetapi yang
+// dibutuhkan berbeda: yang satu perlu tahu harus mulai dari mana, yang satu
+// lagi sudah tahu dan hanya belum mencatat bulan itu. Layar kosong tanpa arahan
+// adalah enam puluh detik pertama yang menentukan bagi orang yang baru membayar.
+//
+// Tidak ada penanda tunggal "pernah memakai aplikasi ini", jadi dipakai
+// gabungan jejak yang semuanya baru ada setelah seseorang benar-benar mulai.
+// Sengaja konservatif: keliru menyembunyikan panduan hanya berarti kehilangan
+// sedikit bantuan, sedangkan menampilkannya kepada pengguna lama terasa seperti
+// aplikasi yang lupa siapa dia.
+function belumPernahMemakai() {
+  const isi = cache[currentYear]?.[MONTHS[currentMonth]];
+  if (isi && (isi.in.length || isi.out.length)) return false;
+  if (settingsCache.recurring?.length) return false;
+  if (Object.keys(settingsCache.budgetLimits || {}).length) return false;
+  if (Object.keys(settingsCache.pilihanTerakhir || {}).length) return false;
+  return true;
+}
+
+function panduanMulai() {
+  return `<div class="panduan-mulai">
+    <div class="panduan-judul">Mulai di sini</div>
+    <ol>
+      <li>Isi <b>Jumlah</b> dan <b>Keterangan</b> di form atas, pilih <b>Kategori</b>, lalu tekan Tambah.</li>
+      <li>Punya struknya? Tekan <b>Scan Struk</b> — nominal dan tanggal terisi sendiri.</li>
+      <li>Ada tagihan tiap bulan seperti kos atau wifi? Buka tab <b>Rutin</b>, dan aplikasi mencatatnya sendiri saat jatuh tempo.</li>
+    </ol>
+    <div class="panduan-kaki">Datamu tersimpan di cloud dan ikut ke perangkat lain saat kamu masuk dengan email yang sama.</div>
+  </div>`;
+}
+
 function renderTable(type, entries, total, isFiltered=false) {
   const wrap=document.getElementById(type+'TableWrap');
   if(!wrap) return;
   // Jumlah entri sudah diset renderFilteredTable() dalam bentuk "3 / 10 entri";
   // jangan ditimpa di sini atau indikator hasil filter tidak pernah terlihat.
   if(entries.length===0) {
+    // Panduan hanya di tab pengeluaran: menampilkannya dua kali di satu layar
+    // membuatnya jadi hiasan, bukan arahan.
+    if(!isFiltered && type==='out' && belumPernahMemakai()) {
+      wrap.innerHTML = panduanMulai();
+      return;
+    }
     wrap.innerHTML=`<div class="empty-state"><div class="icon">${isFiltered?'🔍':type==='in'?'📭':'🧾'}</div><p>${isFiltered?'Tidak ada data yang cocok dengan filter':'Belum ada '+( type==='in'?'pemasukan':'pengeluaran')+' bulan ini'}</p></div>`;
     return;
   }
