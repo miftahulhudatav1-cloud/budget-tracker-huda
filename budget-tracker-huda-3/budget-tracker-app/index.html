@@ -1148,7 +1148,7 @@ import {
 
 // Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
 // perangkat masih menjalankan versi lama dari cache service worker.
-const APP_BUILD = '2026-09-01-o';
+const APP_BUILD = '2026-09-01-p';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
@@ -3480,7 +3480,10 @@ function putarGambar(dataUrl, derajat) {
       ctx.translate(c.width / 2, c.height / 2);
       ctx.rotate(derajat * Math.PI / 180);
       ctx.drawImage(img, -img.width / 2, -img.height / 2);
-      selesai(c.toDataURL('image/jpeg', 0.92));
+      // PNG, bukan JPEG. Masukannya sudah PNG tanpa kehilangan mutu; mengompres
+      // ulang di sini menambahkan artefak tepat di tepi huruf hitam-putih —
+      // persis bagian yang dipakai Tesseract untuk membedakan W dari N.
+      selesai(c.toDataURL('image/png'));
     };
     img.onerror = () => gagal(new Error('Gambar gagal dimuat untuk diputar.'));
     img.src = dataUrl;
@@ -3647,10 +3650,19 @@ function loadScript(src) {
 function getOcrWorker(onProgress) {
   if (ocrWorkerPromise) return ocrWorkerPromise;
   ocrWorkerPromise = (async () => {
-    onProgress?.('Menyiapkan OCR (sekali saja, ±5 MB)…');
+    onProgress?.('Menyiapkan OCR (sekali saja, ±10 MB)…');
     await loadScript(TESSERACT_CDN);
     if (typeof Tesseract === 'undefined') throw new Error('Pustaka OCR tidak termuat.');
-    const w = await Tesseract.createWorker('ind', 1, {
+    // 'ind+eng', bukan 'ind' saja. Tesseract memakai model bahasa untuk
+    // memutuskan huruf yang ambigu, dan struk di Indonesia hampir selalu
+    // bercampur bahasa Inggris — 'PAYMENT QR', 'SIGNATURE NOT REQUIRED',
+    // 'Cardholder Copy', nama tempat seperti 'BREWHOUSE & KITCHEN'. Dengan
+    // kamus Indonesia saja, kata-kata itu didorong ke bentuk yang dianggap
+    // masuk akal dan keluar sebagai omong kosong: 'BREWHOUSE&KITC' terbaca
+    // 'BRENHOUSESATTC'. Menambah 'eng' menggandakan unduhan sekali-seumur
+    // (±5 MB jadi ±10 MB) dan itu sepadan: nama toko dan baris tanggal adalah
+    // bagian yang paling sering berbahasa Inggris.
+    const w = await Tesseract.createWorker('ind+eng', 1, {
       logger: m => {
         if (m.status === 'recognizing text') {
           onProgress?.(`Membaca struk… ${Math.round((m.progress || 0) * 100)}%`);
