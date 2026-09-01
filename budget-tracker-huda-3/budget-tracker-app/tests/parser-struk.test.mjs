@@ -276,5 +276,31 @@ cek('angka utuh tidak berubah',
 cek('kelompok dua digit tidak ikut digabung',
   parseReceipt('TOKO\nTOTAL 24 AUG,26 11:51 Rp 50.000').amount, 50000);
 
+// ── nama toko: derau di ujung ────────────────────
+// Logo, garis pemisah, dan bayangan lipatan kertas terbaca sebagai tanda baca.
+// Kasus nyata: struk BCA menghasilkan "& HORTIKUL BREWHOUSE" karena logonya
+// terbaca sebagai &, dan pembersih lama hanya memangkas spasi.
+cek('ampersand di depan dibuang',
+  parseReceipt('& HORTIKUL BREWHOUSE\nTOTAL 109.000').desc, 'HORTIKUL BREWHOUSE');
+cek('strip dan titik dua di depan dibuang',
+  parseReceipt('- : TOKO MAJU\nTOTAL 50.000').desc, 'TOKO MAJU');
+cek('derau di belakang dibuang',
+  parseReceipt('TOKO MAJU -&\nTOTAL 50.000').desc, 'TOKO MAJU');
+cek('spasi renggang dirapatkan',
+  parseReceipt('TOKO     MAJU     JAYA\nTOTAL 50.000').desc, 'TOKO MAJU JAYA');
+
+// Yang BUKAN derau harus tetap utuh.
+cek('ampersand di tengah nama dipertahankan',
+  parseReceipt('BREWHOUSE&KITCHEN\nTOTAL 50.000').desc, 'BREWHOUSE&KITCHEN');
+cek('titik di ujung nama dipertahankan',
+  parseReceipt('WARUNG SEDERHANA PT.\nTOTAL 50.000').desc, 'WARUNG SEDERHANA PT.');
+cek('kode angka dalam nama tetap ikut',
+  parseReceipt('SPBU PERTAMINA 34.12708\nTOTAL 100.000').desc, 'SPBU PERTAMINA 34.12708');
+
+// Baris yang isinya huruf berserakan adalah derau, bukan nama toko — barisnya
+// dilewati supaya baris berikutnya yang lebih masuk akal yang terpakai.
+cek('huruf berserakan dilewati',
+  parseReceipt('A B C D\nWARUNG PAK BUDI\nTOTAL 50.000').desc, 'WARUNG PAK BUDI');
+
 console.log(`\n${lulus} lulus, ${gagal} gagal`);
 process.exit(gagal ? 1 : 0);

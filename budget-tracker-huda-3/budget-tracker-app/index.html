@@ -1148,7 +1148,7 @@ import {
 
 // Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
 // perangkat masih menjalankan versi lama dari cache service worker.
-const APP_BUILD = '2026-09-01-n';
+const APP_BUILD = '2026-09-01-o';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
@@ -3788,9 +3788,22 @@ function extractDate(text) {
 function extractMerchant(text) {
   const baris = text.split(/\r?\n/).map(b => b.trim()).filter(Boolean);
   for (const b of baris.slice(0, 6)) {
-    const bersih = b.replace(/[^A-Za-z0-9\s.'&-]/g, '').trim();
+    const bersih = b
+      .replace(/[^A-Za-z0-9\s.'&-]/g, '')
+      // Tanda baca di ujung hampir selalu derau: logo, garis, atau bayangan
+      // terbaca sebagai & atau -. Sebelumnya hanya spasi yang dipangkas, jadi
+      // "& HORTIKUL BREWHOUSE" masuk apa adanya ke kolom keterangan.
+      // Titik di ujung belakang dipertahankan — ia sering bagian nama (PT., CV.).
+      .replace(/^[^A-Za-z0-9]+/, '')
+      .replace(/[^A-Za-z0-9.]+$/, '')
+      // OCR kerap merenggangkan spasi di dalam baris judul.
+      .replace(/\s{2,}/g, ' ')
+      .trim();
     if (bersih.length < 3 || bersih.length > 60) continue;
     if (!/[A-Za-z]{3}/.test(bersih)) continue;
+    // Sisa huruf yang berdiri sendiri-sendiri ("A B C D") adalah derau, bukan
+    // nama toko. Nama yang sungguhan punya setidaknya satu kata utuh.
+    if (!/[A-Za-z]{3,}/.test(bersih)) continue;
     if (/^(jl|jalan|no\.|telp|tel|npwp|kasir|struk|nota)\b/i.test(bersih)) continue;
     // Baris nomor telepon/struk didominasi angka. Rasio dipakai daripada "ada 4
     // digit berurutan", karena nama toko bisa memuat kode — misalnya
