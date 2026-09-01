@@ -1009,12 +1009,16 @@
            tanpa atribut itu, yang terbuka galeri atau berkas. Satu input tidak
            bisa melakukan keduanya — begitu capture dipasang, sebagian HP tidak
            lagi menawarkan pilihan galeri sama sekali.
-           Daftar accept sengaja dibatasi ke format yang benar-benar bisa
-           didekode; membiarkan image/* membuat berkas HEIC dari iPhone bisa
-           dipilih lalu gagal dengan pesan yang tidak menjelaskan apa-apa. -->
-      <input type="file" id="scanInput" accept="image/jpeg,image/png,image/webp"
+
+           accept="image/*", bukan daftar format tertentu. Foto iPhone berformat
+           HEIC, dan iOS Safari MENGUBAHNYA sendiri menjadi JPEG saat berkas
+           dipilih lewat input bertipe image/* — justru menyebut image/heic
+           secara eksplisit membuat Safari mengirim HEIC mentahnya, yang tidak
+           bisa didekode di banyak tempat. Daftar yang dibatasi juga membuat
+           sebagian berkas tampak abu-abu dan tidak bisa dipilih sama sekali. -->
+      <input type="file" id="scanInput" accept="image/*"
              capture="environment" style="display:none" onchange="handleReceiptFile(event)">
-      <input type="file" id="uploadInput" accept="image/jpeg,image/png,image/webp"
+      <input type="file" id="uploadInput" accept="image/*"
              style="display:none" onchange="handleReceiptFile(event)">
       <div class="scan-preview" id="scanPreview" style="display:none">
         <img id="scanThumb" alt="Pratinjau struk">
@@ -1166,7 +1170,7 @@ import {
 
 // Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
 // perangkat masih menjalankan versi lama dari cache service worker.
-const APP_BUILD = '2026-09-01-t';
+const APP_BUILD = '2026-09-01-u';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
@@ -3332,16 +3336,37 @@ let pendingReceipt = null;     // { base64, mime, dataUrl } sebelum entri disimp
 // lebih sering salah dibaca — jadi orientasinya diambil dari gambar.
 // Sebagian browser lama menolak opsi itu, dan <img> selalu menerapkan EXIF
 // sendiri, sehingga dipakai sebagai cadangan.
+// Nama format untuk pesan gagal. file.type kerap kosong pada berkas yang datang
+// dari aplikasi Berkas, jadi nama berkasnya dipakai sebagai cadangan.
+function namaFormat(file) {
+  const dariTipe = (file?.type || '').split('/')[1];
+  if (dariTipe) return dariTipe.toUpperCase();
+  // Harus benar-benar ADA titiknya. Tanpa penjagaan ini, nama berkas tanpa
+  // ekstensi dikembalikan utuh oleh split('.').pop(), dan pesannya berbunyi
+  // "Format STRUK tidak bisa dibaca".
+  const nama = file?.name || '';
+  const titik = nama.lastIndexOf('.');
+  const ext = titik > 0 ? nama.slice(titik + 1) : '';
+  return ext && ext.length <= 5 ? ext.toUpperCase() : 'ini';
+}
+
 async function decodeImage(file) {
   try {
     return await createImageBitmap(file, { imageOrientation: 'from-image' });
   } catch {
+    // Cadangan lewat <img>. Ini bukan sekadar jaring pengaman: di iPhone dan Mac
+    // codec HEIC disediakan sistem operasinya, jadi <img> bisa menampilkan foto
+    // yang ditolak createImageBitmap. Elemen <img> juga selalu menerapkan
+    // rotasi EXIF sendiri, sehingga orientasinya tetap benar.
     const url = URL.createObjectURL(file);
     try {
       const img = new Image();
       await new Promise((ok, gagal) => {
         img.onload = ok;
-        img.onerror = () => gagal(new Error('Format gambar tidak didukung browser ini.'));
+        img.onerror = () => gagal(new Error(
+          `Format ${namaFormat(file)} tidak bisa dibaca di browser ini. ` +
+          `Coba buka fotonya lalu simpan sebagai JPG, atau kirim tangkapan layarnya.`
+        ));
         img.src = url;
       });
       return img;   // punya naturalWidth/naturalHeight, bisa dipakai drawImage
