@@ -1170,7 +1170,7 @@ import {
 
 // Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
 // perangkat masih menjalankan versi lama dari cache service worker.
-const APP_BUILD = '2026-09-01-u';
+const APP_BUILD = '2026-09-01-v';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
@@ -1948,6 +1948,17 @@ window.addEntry = async function(type) {
   };
   if(type === 'out') data.method = document.getElementById('outMethod').value;
 
+  // Kategori diwajibkan. Budget per kategori, insight, dan grafik pai semuanya
+  // bergantung padanya — entri tanpa kategori diam-diam melumpuhkan ketiganya,
+  // dan pemiliknya baru sadar berbulan-bulan kemudian saat rekapnya tidak
+  // masuk akal. Karena dropdown-nya kini terisi sendiri dari pilihan terakhir,
+  // ini hanya benar-benar terasa pada entri pertama.
+  if(!data.cat) {
+    showToast('Pilih kategorinya dulu — budget dan insight menghitung dari sini.','error');
+    document.getElementById(type+'Cat').focus();
+    return;
+  }
+
   // ── OPTIMISTIC UI: tambah ke cache langsung ──
   const tempId = 'temp_' + Date.now();
   initCache(currentYear);
@@ -1957,9 +1968,18 @@ window.addEntry = async function(type) {
 
   // Reset form immediately
   ['Amount','Desc','Note'].forEach(f => document.getElementById(type+f).value = '');
-  document.getElementById(type+'Cat').value = '';
-  document.getElementById(type+'Type').value = '';
-  if(type==='out') document.getElementById('outMethod').value = '';
+  // Dropdown TIDAK dikosongkan — dipasangi pilihan terakhir. Lihat catatan di
+  // terapkanPilihanTerakhir(): pengeluaran harian berulang, dan mengosongkan
+  // ketiganya tiap kali berarti tiga ketukan untuk hal yang sama setiap hari.
+  ingatPilihan(type, data);
+  // Hanya field milik arus ini. idField(type,'Method') selalu menunjuk
+  // 'outMethod', jadi menyapu ketiganya untuk pemasukan akan ikut mengosongkan
+  // metode bayar di form pengeluaran yang sedang tidak disentuh.
+  fieldIngatan(type).forEach(f => {
+    const el = document.getElementById(idField(type, f));
+    if (el) el.value = '';
+  });
+  terapkanPilihanTerakhir(type);
   const receiptToSave = (type === 'out') ? pendingReceipt : null;
   clearPendingReceipt();   // form dikosongkan langsung, foto sudah dipegang di atas
   showToast(type==='in' ? 'Pemasukan ditambahkan' : 'Pengeluaran ditambahkan', 'success');
@@ -2780,7 +2800,7 @@ let langgananSaatIni = { status: 'trial', sisaHari: HARI_MASA_COBA, sampai: null
 // dengan penulisan langsung ke Firestore.
 
 let bacaDariModelBaru = false;
-let settingsCache = { recurring: [], budgetLimits: {}, migratedV2: false, fcmToken: '', fcmVapid: '', tz: '' };
+let settingsCache = { recurring: [], budgetLimits: {}, migratedV2: false, fcmToken: '', fcmVapid: '', tz: '', pilihanTerakhir: {} };
 let unsubSettings = null;
 
 function settingsRef(uid) { return doc(db, `users/${uid}/settings`, 'app'); }
@@ -2811,7 +2831,8 @@ async function initSettings(uid) {
       migratedV2:   d.migratedV2 === true,
       fcmToken:     d.fcmToken || '',
       fcmVapid:     d.fcmVapid || '',
-      tz:           d.tz || ''
+      tz:           d.tz || '',
+      pilihanTerakhir: (d.pilihanTerakhir && typeof d.pilihanTerakhir === 'object') ? d.pilihanTerakhir : {}
     };
     // Begitu bendera berubah dari false ke true, listener harus dipasang ulang
     // agar berpindah ke koleksi baru. Selama masih false, semuanya tetap di
@@ -2822,6 +2843,11 @@ async function initSettings(uid) {
     }
     if (currentTab === 'recurring') renderRecurringList();
     if (currentTab === 'out') renderBudgetGrid();
+    // Dipasang di sini, bukan di buildUI: pilihan terakhir baru diketahui
+    // setelah settings tiba dari cloud, dan itu bisa lebih lambat daripada
+    // tampilnya form. Yang sudah diisi pengguna tidak akan tertimpa —
+    // pilihNilaiAwal() selalu mendahulukan nilai yang sudah ada.
+    ['in', 'out'].forEach(terapkanPilihanTerakhir);
   }, e => console.error('Gagal memantau pengaturan:', e));
 }
 
@@ -2838,6 +2864,65 @@ function bacaSettingsLokal() {
     } catch {}
   }
   return { recurring, budgetLimits };
+}
+
+// ── PILIHAN TERAKHIR ──
+// Kategori, Jenis, dan Metode Bayar dulu dikosongkan setiap kali entri
+// tersimpan. Pengeluaran harian orang berulang — makan, tunai, makan, tunai —
+// jadi itu berarti tiga ketukan dropdown untuk hal yang sama setiap hari.
+//
+// Yang lebih merugikan: ketiganya tidak wajib, sehingga jalan termudah adalah
+// melewatinya. Padahal budget per kategori, insight, dan grafik pai SEMUANYA
+// bergantung pada kategori terisi — aplikasinya memudahkan orang melumpuhkan
+// fiturnya sendiri.
+//
+// Disimpan di settings, bukan localStorage, supaya kebiasaan ikut berpindah
+// antar perangkat seperti data lainnya.
+//
+// Murni supaya bisa diuji: memilih nilai mana yang dipakai untuk satu field.
+//   nilaiSekarang — yang sudah ada di form (mis. hasil scan struk)
+//   diingat       — pilihan terakhir untuk arus ini
+//   pilihanSah    — daftar opsi yang benar-benar ada di dropdown
+function pilihNilaiAwal(nilaiSekarang, diingat, pilihanSah) {
+  const sah = v => !!v && Array.isArray(pilihanSah) && pilihanSah.includes(v);
+  // Yang sudah terisi tidak pernah ditimpa: hasil scan struk lebih tahu
+  // daripada kebiasaan kemarin.
+  if (sah(nilaiSekarang)) return nilaiSekarang;
+  // Opsi bisa hilang dari daftar setelah pembaruan; nilai yang tidak ada lagi
+  // akan diam-diam gagal dipasang dan menyisakan dropdown kosong tanpa sebab.
+  if (sah(diingat)) return diingat;
+  return '';
+}
+
+function opsiDari(id) {
+  const el = document.getElementById(id);
+  return el ? [...el.options].map(o => o.value).filter(Boolean) : [];
+}
+
+// Field yang diingat per arus. Metode bayar hanya ada di pengeluaran.
+function fieldIngatan(type) {
+  return type === 'out' ? ['Cat', 'Type', 'Method'] : ['Cat', 'Type'];
+}
+function idField(type, f) { return f === 'Method' ? 'outMethod' : type + f; }
+
+function ingatPilihan(type, data) {
+  const simpan = { cat: data.cat || '', type: data.type || '' };
+  if (type === 'out') simpan.method = data.method || '';
+  simpanSettings({
+    pilihanTerakhir: { ...settingsCache.pilihanTerakhir, [type]: simpan }
+  });
+}
+
+// Dipasang setelah form dikosongkan, dan sekali saat aplikasi dibuka.
+function terapkanPilihanTerakhir(type) {
+  const diingat = settingsCache.pilihanTerakhir?.[type] || {};
+  const kunci = { Cat: 'cat', Type: 'type', Method: 'method' };
+  for (const f of fieldIngatan(type)) {
+    const id = idField(type, f);
+    const el = document.getElementById(id);
+    if (!el) continue;
+    el.value = pilihNilaiAwal(el.value, diingat[kunci[f]], opsiDari(id));
+  }
 }
 
 function simpanSettings(patch) {
@@ -5024,7 +5109,7 @@ window.logoutUser = async function() {
   // Pengaturan juga milik akun: lepas listener dan kosongkan, agar akun berikutnya
   // yang login di perangkat ini tidak melihat transaksi rutin milik akun sebelumnya.
   if(unsubSettings) { unsubSettings(); unsubSettings = null; }
-  settingsCache = { recurring: [], budgetLimits: {}, migratedV2: false, fcmToken: '', fcmVapid: '', tz: '' };
+  settingsCache = { recurring: [], budgetLimits: {}, migratedV2: false, fcmToken: '', fcmVapid: '', tz: '', pilihanTerakhir: {} };
   bacaDariModelBaru = false;
   rutinSudahDicek = false;
   // Status langganan juga milik akun. muatLangganan() berjalan asinkron setelah
