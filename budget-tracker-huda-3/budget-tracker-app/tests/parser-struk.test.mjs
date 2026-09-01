@@ -328,5 +328,59 @@ cek('tanpa kandidat lain, nama bank tetap dipakai',
 cek('baris barang tidak mengalahkan nama toko',
   parseReceipt('INDOMARET\nINDOMIE GORENG SOTO SPECIAL 3.500\nTOTAL 14.500').desc, 'INDOMARET');
 
+// ── keluaran OCR sungguhan: struk BCA di atas kayu ──
+// Disalin apa adanya dari Diagnosa. Nilainya ada pada jalur derau di TEPI KIRI:
+// hampir setiap baris membawa satu-dua karakter sampah di depannya, sisa latar
+// kayu yang ikut terpotong. Tanpa dibuang, nama tokonya masuk sebagai
+// "2 HORT TKUL BREWAOUSESRITC".
+// Baris penanda "[latar terpotong otomatis]" sengaja TIDAK disertakan: ia hanya
+// ditambahkan untuk tampilan Diagnosa, parser tidak pernah melihatnya.
+const ocrBCA = `a
+b
+ra)
+& BCA
+2 HORT TKUL BREWAOUSESRITC
+28 KP. SUKAKARYA pS GADOG
+RO RT 03/ RW 02
+Uu
+g (ERM 42051636 KERCE 000885002¢ 52062
+3 0g95H#+4*80
+5 DIMAS MAULANA
+Issuer: BCA
+EPANKI360001410181599191
+@ PAYHENT QR 00/1 5 106,26 11:91
+oy DEBIT
+n BATCH : 000619 TRACE MO: 000103
+bp REF.NO 823611006103 AOR (OOF 115144
+RRN QRIS 462034444
+TOTAL Rp.109 ,000
+a Sa: SIGNATURE NOT REQUIRED ™**
+20 ANSO4VB 7 «sgardholder Copy”
+8 Mp AN30360001430026520624`;
+
+const bca = parseReceipt(ocrBCA);
+// 'Rp.109 ,000' — spasi SEBELUM koma. Ini yang dulu keluar sebagai Rp 109.
+cek('OCR BCA: total 109.000 meski spasi sebelum koma', bca.amount, 109000);
+cek('OCR BCA: bukan tebakan', bca.ditebak, false);
+// Baris logo "& BCA" ada DI ATAS nama toko dan sama-sama lolos saringan.
+// Inilah yang membuat hasilnya dulu berganti-ganti antara "2 BCA" dan nama toko.
+cek('OCR BCA: nama toko menang atas baris logo, tanpa sampah depan',
+  bca.desc, 'HORT TKUL BREWAOUSESRITC');
+cek('OCR BCA: bukan baris alamat', /SUKAKARYA/.test(bca.desc || ''), false);
+
+// Sampah depan dibuang; awalan badan usaha yang sah tidak.
+cek('angka sampah di depan dibuang',
+  parseReceipt('2 WARUNG PAK BUDI\nTOTAL 50.000').desc, 'WARUNG PAK BUDI');
+cek('dua angka sampah di depan dibuang',
+  parseReceipt('28 WARUNG PAK BUDI\nTOTAL 50.000').desc, 'WARUNG PAK BUDI');
+cek('satu huruf sampah di depan dibuang',
+  parseReceipt('g WARUNG PAK BUDI\nTOTAL 50.000').desc, 'WARUNG PAK BUDI');
+cek('PT tidak ikut terbuang',
+  parseReceipt('PT MAJU JAYA SENTOSA\nTOTAL 50.000').desc, 'PT MAJU JAYA SENTOSA');
+cek('CV tidak ikut terbuang',
+  parseReceipt('CV MAJU JAYA SENTOSA\nTOTAL 50.000').desc, 'CV MAJU JAYA SENTOSA');
+cek('kata utuh di depan tidak terbuang',
+  parseReceipt('TOKO MAJU JAYA\nTOTAL 50.000').desc, 'TOKO MAJU JAYA');
+
 console.log(`\n${lulus} lulus, ${gagal} gagal`);
 process.exit(gagal ? 1 : 0);
