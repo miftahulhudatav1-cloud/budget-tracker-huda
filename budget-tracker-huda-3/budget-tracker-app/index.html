@@ -118,6 +118,18 @@
   /* Bar langganan. Warnanya emas saat memperingatkan dan merah saat sudah
      berhenti — bukan merah sejak awal, supaya peringatan yang benar-benar
      mendesak tidak kehilangan artinya. */
+  /* Ajakan memasang. Nada tenang: ia berguna, tapi bukan peringatan. */
+  .pasang-bar{display:flex;align-items:center;flex-wrap:wrap;gap:10px;
+    background:var(--surface);border:1px solid var(--border);color:var(--text-dim);
+    border-radius:12px;padding:10px 14px;margin-bottom:14px;font-size:12px;line-height:1.5;}
+  .pasang-bar button{background:transparent;border:1px solid currentColor;color:var(--text);
+    border-radius:8px;padding:5px 12px;font:inherit;font-size:12px;font-weight:700;cursor:pointer;}
+  .pasang-bar button:hover{background:rgba(255,255,255,0.08);}
+  .pasang-bar span{flex:1;min-width:180px;}
+  .pasang-bar .pasang-tutup{border:none;color:var(--text-muted);padding:5px 8px;font-weight:400;}
+  .panduan-ios{margin:14px 0 0;padding-left:20px;display:flex;flex-direction:column;gap:9px;
+    font-size:13px;line-height:1.6;color:var(--text-dim);}
+  .panduan-ios b{color:var(--text);font-weight:700;}
   .langganan-bar{display:flex;align-items:center;flex-wrap:wrap;gap:8px;
     background:var(--gold-dim);border:1px solid var(--gold);color:var(--text);
     border-radius:12px;padding:10px 14px;margin-bottom:14px;font-size:13px;line-height:1.5;}
@@ -823,6 +835,14 @@
        ditampilkan terus-menerus akan diabaikan justru ketika penting. -->
   <div id="langgananBar" class="langganan-bar" style="display:none"></div>
 
+  <!-- Ajakan memasang. Muncul hanya bila memang bisa dipasang dan belum
+       ditutup; sesudah ditutup tetap bisa dicapai lewat menu ⋯. -->
+  <div id="pasangBar" class="pasang-bar" style="display:none">
+    <span>Pasang ke layar utama biar seperti aplikasi biasa — dan notifikasi pengingat bisa masuk.</span>
+    <button onclick="pasangAplikasi()">Pasang</button>
+    <button class="pasang-tutup" onclick="tutupAjakanPasang()" title="Tutup">✕</button>
+  </div>
+
   <div class="header">
     <div class="header-badge"><span></span> Cloud Sync Aktif</div>
     <h1 id="appTitle" onclick="ubahNama()" title="Ketuk untuk mengganti nama" style="cursor:pointer">Keuangan</h1>
@@ -840,6 +860,8 @@
           <button onclick="tutupMenu();exportToExcel()">Export Excel</button>
           <button onclick="tutupMenu();exportToPDF()">Export PDF</button>
           <button onclick="tutupMenu();openBackupModal()">Backup &amp; Restore</button>
+          <div class="menu-sep"></div>
+          <button onclick="tutupMenu();pasangAplikasi()">Pasang ke Layar Utama</button>
           <div class="menu-sep"></div>
           <button onclick="tutupMenu();aturNotifikasi()" id="menuNotif">Notifikasi Pengingat</button>
           <div class="menu-sep"></div>
@@ -900,6 +922,21 @@
     <button class="tab-btn" onclick="setTab('out')">Pengeluaran</button>
     <button class="tab-btn" onclick="setTab('annual')">Tahunan</button>
     <button class="tab-btn" onclick="setTab('recurring')">Rutin</button>
+  </div>
+
+  <div class="modal-overlay" id="pasangModal">
+    <div class="modal-box">
+      <button class="modal-close" onclick="tutupPanduanPasang()">✕</button>
+      <div class="modal-title">Pasang ke Layar Utama</div>
+      <div class="modal-sub">Tiga langkah di Safari</div>
+      <ol class="panduan-ios">
+        <li>Ketuk tombol <b>Bagikan</b> di bawah layar — kotak dengan panah ke atas.</li>
+        <li>Gulir ke bawah, pilih <b>Tambahkan ke Layar Utama</b>.</li>
+        <li>Ketuk <b>Tambah</b> di kanan atas.</li>
+      </ol>
+      <div class="panduan-kaki">Setelah terpasang, buka aplikasinya dari ikon di layar utama — bukan dari Safari. Notifikasi pengingat di iPhone hanya bekerja dari sana.</div>
+      <button class="modal-btn secondary" onclick="tutupPanduanPasang()" style="margin-top:14px">Tutup</button>
+    </div>
   </div>
 
   <div class="modal-overlay" id="langgananModal">
@@ -1186,7 +1223,7 @@ import {
 
 // Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
 // perangkat masih menjalankan versi lama dari cache service worker.
-const APP_BUILD = '2026-09-01-x';
+const APP_BUILD = '2026-09-01-y';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
@@ -1404,6 +1441,12 @@ function startApp(cfg) {
         setTimeout(() => { try { buildUI(); } catch(e2) { console.error('buildUI error:', e2); } }, 100);
         cekTokenSesuaiProject(user);
         muatLangganan(user);
+        // Dipanggil di sini juga, bukan hanya dari beforeinstallprompt: event
+        // itu tidak pernah ada di iOS, jadi tanpa panggilan ini pengguna iPhone
+        // tidak akan pernah melihat ajakan memasang sama sekali — dan justru
+        // merekalah yang paling membutuhkannya, karena notifikasi di iOS baru
+        // bekerja setelah aplikasinya terpasang.
+        tampilkanAjakanPasang();
       } else {
         currentUser = null;
         document.getElementById('mainApp').style.display = 'none';
@@ -5283,6 +5326,120 @@ window.logoutUser = async function() {
   showToast('Berhasil keluar 👋', 'success');
 };
 
+
+// ── PASANG KE LAYAR UTAMA ──────────────────────
+// Manifest PWA-nya sudah benar, tapi tidak ada apa pun yang memberi tahu orang
+// bahwa aplikasinya BISA dipasang. Akibatnya pembeli memakainya lewat tab
+// browser: ikonnya tidak ada di layar utama, dan aplikasinya terasa seperti
+// situs — bukan sesuatu yang pantas dibayar bulanan.
+//
+// Di iOS akibatnya lebih jauh: notifikasi push HANYA bekerja setelah aplikasi
+// dipasang ke layar utama. Pengingat harian yang sudah dibangun tidak akan
+// pernah sampai ke pengguna iPhone yang tidak memasangnya.
+//
+// Murni supaya bisa diuji — deteksi platform adalah tempat yang paling mudah
+// salah, dan salahnya berupa petunjuk yang mustahil diikuti.
+//   ua         — navigator.userAgent
+//   standalone — sudah berjalan sebagai aplikasi terpasang
+//   adaPrompt  — browser sudah menawarkan pemasangan (beforeinstallprompt)
+function modePasang({ ua = '', standalone = false, adaPrompt = false } = {}) {
+  if (standalone) return 'sudah';
+  // Kalau browser menawarkan sendiri, itu selalu jalan terbaik: satu ketukan,
+  // tanpa perlu menjelaskan menu apa pun.
+  if (adaPrompt) return 'tombol';
+  const ios = /iphone|ipad|ipod/i.test(ua)
+    // iPad modern menyamar sebagai Mac; yang membedakannya layar sentuh.
+    || (/macintosh/i.test(ua) && typeof navigator !== 'undefined' && navigator.maxTouchPoints > 1);
+  if (!ios) return 'tidak';
+  // Di iOS, HANYA Safari yang bisa memasang PWA. Chrome dan Firefox di sana
+  // memakai mesin yang sama tapi tidak diberi kemampuan itu, jadi menampilkan
+  // panduan Safari kepada mereka berarti menyuruh mencari menu yang tidak ada.
+  const safari = !/crios|fxios|edgios|opt\//i.test(ua);
+  return safari ? 'panduan-ios' : 'buka-safari';
+}
+
+let promptPasang = null;
+
+// Chrome menyimpan tawarannya lewat event ini. Harus dicegat dan disimpan;
+// kalau dibiarkan lewat, tawarannya hilang dan tidak bisa dimunculkan lagi
+// atas permintaan pengguna.
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault();
+  promptPasang = e;
+  tampilkanAjakanPasang();
+});
+
+window.addEventListener('appinstalled', () => {
+  promptPasang = null;
+  const bar = document.getElementById('pasangBar');
+  if (bar) bar.style.display = 'none';
+  showToast('Terpasang. Buka dari ikon di layar utama.', 'success');
+});
+
+function sudahTerpasang() {
+  return window.matchMedia?.('(display-mode: standalone)').matches
+      || window.navigator.standalone === true;
+}
+
+function modePasangSekarang() {
+  return modePasang({
+    ua: navigator.userAgent,
+    standalone: sudahTerpasang(),
+    adaPrompt: !!promptPasang,
+  });
+}
+
+function ajakanDitutup() {
+  try { return localStorage.getItem('ajakanPasangDitutup') === '1'; } catch { return false; }
+}
+
+function tampilkanAjakanPasang() {
+  const bar = document.getElementById('pasangBar');
+  if (!bar) return;
+  const mode = modePasangSekarang();
+  // 'buka-safari' sengaja tidak memunculkan bar: menyuruh orang berpindah
+  // browser di tengah jalan lebih mengganggu daripada menolong. Ia tetap bisa
+  // dicapai lewat menu, bagi yang memang mencarinya.
+  if (mode !== 'tombol' && mode !== 'panduan-ios') { bar.style.display = 'none'; return; }
+  if (ajakanDitutup()) { bar.style.display = 'none'; return; }
+  bar.style.display = 'flex';
+}
+
+window.tutupAjakanPasang = function() {
+  const bar = document.getElementById('pasangBar');
+  if (bar) bar.style.display = 'none';
+  try { localStorage.setItem('ajakanPasangDitutup', '1'); } catch {}
+};
+
+// Satu pintu untuk bar maupun menu ⋯.
+window.pasangAplikasi = async function() {
+  const mode = modePasangSekarang();
+  if (mode === 'sudah') { showToast('Aplikasi ini sudah terpasang.', 'success'); return; }
+  if (mode === 'tombol') {
+    promptPasang.prompt();
+    const { outcome } = await promptPasang.userChoice;
+    // Tawaran hanya bisa dipakai sekali; sesudahnya harus menunggu Chrome
+    // menawarkannya lagi.
+    promptPasang = null;
+    if (outcome !== 'accepted') showToast('Bisa dipasang kapan saja lewat menu ⋯.', 'success');
+    tampilkanAjakanPasang();
+    return;
+  }
+  if (mode === 'buka-safari') {
+    showToast('Di iPhone, hanya Safari yang bisa memasang aplikasi. Buka alamat ini di Safari lalu coba lagi.', 'error');
+    return;
+  }
+  bukaPanduanPasang();
+};
+
+function bukaPanduanPasang() {
+  const m = document.getElementById('pasangModal');
+  if (m) m.style.display = 'flex';
+}
+window.tutupPanduanPasang = function() {
+  const m = document.getElementById('pasangModal');
+  if (m) m.style.display = 'none';
+};
 
 // ── THEME TOGGLE ────────────────────────────────
 function applyTheme(theme) {
