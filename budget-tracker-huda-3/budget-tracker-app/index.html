@@ -514,6 +514,8 @@
   /* Kolom nomor: selebar isinya saja, rata kanan supaya angka satuan dan
      puluhan tetap sejajar, dan diredupkan karena ia penunjuk posisi — bukan
      data yang perlu bersaing dengan keterangan dan nominal. */
+  /* Penanda bahwa nominalnya hanya tebakan, bukan dibaca dari baris TOTAL. */
+  .perlu-dicek{color:var(--gold)!important;font-weight:600;}
   .tbl .sel-no{width:1%;white-space:nowrap;text-align:right;font-family:var(--mono);
     font-size:11px;color:var(--text-muted);}
   .tbl-ringkas td,.tbl-ringkas th{padding:9px 10px;}
@@ -1146,7 +1148,7 @@ import {
 
 // Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
 // perangkat masih menjalankan versi lama dari cache service worker.
-const APP_BUILD = '2026-09-01-l';
+const APP_BUILD = '2026-09-01-m';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
@@ -3457,6 +3459,34 @@ async function siapkanUntukOCR(file) {
 // pada foto dengan cahaya tidak rata ia justru menyelamatkan yang gagal terbaca.
 // Satu cara pra-proses tidak pernah cocok untuk semua kondisi foto — itulah
 // sebabnya hasilnya terasa kadang bisa kadang tidak.
+// Memutar gambar 90/180/270 derajat.
+//
+// Tesseract tidak bisa membaca teks yang terjungkir sama sekali — ia tidak
+// gagal dengan jujur, melainkan mengarang: struk yang difoto terbalik
+// menghasilkan 'Rp 109.000' terbaca '9.000' dan 'BCA' jadi 'BA naa'. Angka
+// salah yang tampak masuk akal jauh lebih berbahaya daripada tidak terbaca,
+// karena tidak ada apa pun yang memberi tahu pemiliknya bahwa itu keliru.
+function putarGambar(dataUrl, derajat) {
+  return new Promise((selesai, gagal) => {
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement('canvas');
+      // Pada 90 dan 270 sisi-sisinya bertukar; memakai ukuran asli akan
+      // memotong gambar menjadi bujur sangkar dan membuang sebagian struk.
+      const tegak = derajat === 90 || derajat === 270;
+      c.width  = tegak ? img.height : img.width;
+      c.height = tegak ? img.width  : img.height;
+      const ctx = c.getContext('2d');
+      ctx.translate(c.width / 2, c.height / 2);
+      ctx.rotate(derajat * Math.PI / 180);
+      ctx.drawImage(img, -img.width / 2, -img.height / 2);
+      selesai(c.toDataURL('image/jpeg', 0.92));
+    };
+    img.onerror = () => gagal(new Error('Gambar gagal dimuat untuk diputar.'));
+    img.src = dataUrl;
+  });
+}
+
 function versiHitamPutih(dataUrl) {
   return new Promise((selesai, gagal) => {
     const img = new Image();
@@ -3544,25 +3574,37 @@ window.handleReceiptFile = async function(event) {
     hint.textContent = 'Menyiapkan gambar…';
     const siap = await siapkanUntukOCR(file);
 
-    // Dua percobaan dengan pra-proses berbeda. Tidak ada satu cara yang cocok
-    // untuk semua kondisi foto — itu persis yang membuat hasilnya terasa kadang
-    // bisa kadang tidak. Percobaan kedua hanya dijalankan bila yang pertama
-    // tidak menemukan baris TOTAL, jadi foto yang jelas tetap cepat.
-    let teks = (await worker.recognize(siap.dataUrl))?.data?.text || '';
-    let data = parseReceipt(teks);
+    // Beberapa percobaan, berhenti begitu ada yang menemukan baris TOTAL.
+    // Tidak ada satu cara yang cocok untuk semua kondisi foto — itu persis yang
+    // membuat hasilnya terasa kadang bisa kadang tidak.
+    //
+    // Perputaran ada di daftar ini karena Tesseract sama sekali tidak bisa
+    // membaca teks yang terjungkir: struk yang difoto terbalik menghasilkan
+    // omong kosong yang tampak seperti hasil pembacaan sungguhan — 'Rp 109.000'
+    // terbaca '9.000', 'BCA' jadi 'BA naa'. Angka yang salah tapi masuk akal
+    // jauh lebih berbahaya daripada kegagalan yang jujur.
+    const percobaan = [
+      { nama: 'Membaca struk…',        buat: async () => siap.dataUrl },
+      { nama: 'Mempertajam…',          buat: () => versiHitamPutih(siap.dataUrl) },
+      { nama: 'Mencoba posisi lain…',  buat: () => putarGambar(siap.dataUrl, 180) },
+      { nama: 'Mencoba posisi lain…',  buat: () => putarGambar(siap.dataUrl, 90) },
+      { nama: 'Mencoba posisi lain…',  buat: () => putarGambar(siap.dataUrl, 270) },
+    ];
 
-    if (data.amount === null || data.ditebak) {
-      hint.textContent = 'Mencoba sekali lagi…';
+    let teks = '', data = parseReceipt('');
+    for (const p of percobaan) {
+      hint.textContent = p.nama;
+      let mentah, hasil;
       try {
-        const teks2 = (await worker.recognize(await versiHitamPutih(siap.dataUrl)))?.data?.text || '';
-        const data2 = parseReceipt(teks2);
-        // Hasil yang menemukan baris TOTAL selalu menang atas tebakan; kalau
-        // dua-duanya tebakan, yang pertama dipertahankan.
-        if ((data2.amount !== null && !data2.ditebak) ||
-            (data.amount === null && data2.amount !== null)) {
-          teks = teks2; data = data2;
-        }
-      } catch (e) { console.warn('Percobaan kedua gagal:', e); }
+        mentah = (await worker.recognize(await p.buat()))?.data?.text || '';
+        hasil  = parseReceipt(mentah);
+      } catch (e) { console.warn('Percobaan OCR gagal:', p.nama, e); continue; }
+
+      if (!teks) teks = mentah;                       // simpan yang pertama untuk Diagnosa
+      // Yang menemukan baris TOTAL langsung menang dan menghentikan sisanya.
+      if (hasil.amount !== null && !hasil.ditebak) { teks = mentah; data = hasil; break; }
+      // Kalau belum ada apa-apa sama sekali, tebakan pun lebih baik daripada kosong.
+      if (data.amount === null && hasil.amount !== null) { teks = mentah; data = hasil; }
     }
 
     // Disimpan agar bisa dilihat lewat Diagnosa. Tanpa melihat apa yang
@@ -3706,9 +3748,18 @@ function extractDate(text) {
     const t = rakitTanggal(+m[1], +m[2], +m[3]);
     if (t) return t;
   }
-  for (const m of text.matchAll(/\b(\d{1,2})\s+([A-Za-z]{3,})\s+(\d{4})\b/g)) {
+  // "24 Agu 2026", dan juga "24 AUG,26" — struk mesin EDC bank memakai singkatan
+  // bulan berbahasa Inggris, tahun dua digit, dan koma sebagai pemisah. Pemisah
+  // dibuat longgar; yang menjaga dari salah tangkap adalah bulannya harus benar
+  // -benar dikenali, bukan ketatnya pemisah.
+  for (const m of text.matchAll(/\b(\d{1,2})[\s.,\-]+([A-Za-z]{3,})[\s.,\-]+(\d{2,4})\b/g)) {
     const bl = BULAN_SINGKAT[m[2].slice(0,3).toLowerCase()];
     if (bl) { const t = rakitTanggal(+m[3], bl, +m[1]); if (t) return t; }
+  }
+  // Urutan bulan-dulu: "AUG 24, 2026".
+  for (const m of text.matchAll(/\b([A-Za-z]{3,})[\s.,\-]+(\d{1,2})[\s.,\-]+(\d{2,4})\b/g)) {
+    const bl = BULAN_SINGKAT[m[1].slice(0,3).toLowerCase()];
+    if (bl) { const t = rakitTanggal(+m[3], bl, +m[2]); if (t) return t; }
   }
   return null;
 }
@@ -3819,9 +3870,18 @@ function showReceiptPreview(dataUrl, d) {
     d.cat    ? 'kategori': null,
   ].filter(Boolean);
   document.getElementById('scanThumb').src = dataUrl;
-  document.getElementById('scanPreviewText').textContent =
+  const el = document.getElementById('scanPreviewText');
+
+  // Kalimatnya dulu berbunyi sama pastinya entah nominalnya benar-benar dibaca
+  // dari baris TOTAL atau hanya ditebak dari angka terbesar. Foto yang buruk
+  // menghasilkan angka salah yang tampak meyakinkan, dan tidak ada apa pun yang
+  // memberi tahu bahwa itu perlu diperiksa. Tebakan harus terlihat seperti
+  // tebakan — itu satu-satunya yang membuat orang mau melirik angkanya lagi.
+  el.textContent =
     (terbaca.length ? `Terbaca: ${terbaca.join(', ')}` : 'Tidak ada yang terbaca') +
+    (d.ditebak ? ' · nominal hanya perkiraan, cek dulu' : '') +
     ' · foto disimpan 7 hari';
+  el.classList.toggle('perlu-dicek', !!d.ditebak);
   document.getElementById('scanPreview').style.display = 'flex';
 }
 

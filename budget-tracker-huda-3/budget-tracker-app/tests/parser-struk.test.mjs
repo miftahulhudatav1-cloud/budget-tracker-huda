@@ -201,5 +201,53 @@ cek('subtota| rusak tetap diabaikan',
 cek('TOTAL BAYAR tidak ikut terbuang',
   parseReceipt('TOKO\nNASI Rp 30.000\nTOTAL BAYAR Rp 33.000').amount, 33000);
 
+// ── struk mesin EDC bank ─────────────────────────
+// Struk kartu memakai konvensi yang sama sekali berbeda dari struk kasir:
+// singkatan bulan berbahasa Inggris, tahun dua digit, koma sebagai pemisah
+// ribuan, dan nomor-nomor panjang (TRACE, BATCH, REF, RRN, PAN) yang jauh
+// melebihi nominalnya. Diambil dari struk BCA sungguhan.
+const strukEDC = `
+HORTIKUL BREWHOUSE&KITC
+KP. SUKAKARYA DS GADOG
+RT 03/ RW 02
+TERM# A2051636        MERC# 000885002652062
+0895******80
+DIMAS MAULANA
+Issuer: BCA
+CPAN#9360014101815991 91
+PAYMENT QR    DATE/TIME 24 AUG,26 11:51
+DEBIT
+TRACE NO: 006103    BATCH : 000619
+REF.NO. 623611006103   APPR.CODE 115144
+RRN QRIS 462934444
+TOTAL             Rp.109,000
+*** SIGNATURE NOT REQUIRED ***
+**Cardholder Copy**
+`;
+const edc = parseReceipt(strukEDC);
+cek('EDC: total 109.000 dari koma ribuan', edc.amount, 109000);
+cek('EDC: bukan tebakan',                  edc.ditebak, false);
+// "24 AUG,26" — bulan Inggris, tahun dua digit, dipisah koma. Format ini dulu
+// tidak dikenali sama sekali, sehingga tanggalnya diam-diam jatuh ke hari ini.
+cek('EDC: tanggal "24 AUG,26"',            edc.date, '2026-08-24');
+
+// Nomor-nomor panjang di struk kartu tidak boleh terbaca sebagai nominal.
+cek('EDC: bukan nomor REF/RRN/PAN',        edc.amount < 1e6, true);
+
+// Varian format tanggal lain yang wajar ditemui
+cek('tanggal "AUG 24, 2026" (bulan dulu)',
+  parseReceipt('TOKO\nAUG 24, 2026\nTOTAL 50.000').date, '2026-08-24');
+cek('tanggal "24-Agu-2026" dipisah strip',
+  parseReceipt('TOKO\n24-Agu-2026\nTOTAL 50.000').date, '2026-08-24');
+cek('tanggal "24 Agu 2026" tetap jalan',
+  parseReceipt('TOKO\n24 Agu 2026\nTOTAL 50.000').date, '2026-08-24');
+
+// Pelonggaran pemisah tidak boleh membuat sembarang angka jadi tanggal:
+// yang menjaga adalah bulannya harus benar-benar dikenali.
+cek('kata bukan-bulan tidak jadi tanggal',
+  parseReceipt('TOKO\nMEJA 12 Item 26\nTOTAL 50.000').date, null);
+cek('nomor panjang tidak jadi tanggal',
+  parseReceipt('TOKO\nREF.NO. 623611006103\nTOTAL 50.000').date, null);
+
 console.log(`\n${lulus} lulus, ${gagal} gagal`);
 process.exit(gagal ? 1 : 0);
