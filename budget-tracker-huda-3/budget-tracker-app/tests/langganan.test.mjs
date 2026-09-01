@@ -90,5 +90,18 @@ cek('project tidak terbaca → bukan mode layanan',
 cek('dua project kosong tidak dianggap cocok',
   modeLayanan(true, '', ''), false);
 
+// ── penanda potongan ikut dijaga ─────────────────
+// scripts/daftar-pengguna.mjs mengambil hitungLangganan() dari index.html
+// dengan penanda yang PERSIS sama, supaya status yang dipakai untuk menagih
+// orang tidak pernah menyimpang dari yang ditegakkan aplikasi. Kalau penandanya
+// bergeser, skrip itu berhenti bekerja tanpa ada yang memberi tahu — jadi
+// keberadaannya dijaga di sini juga.
+cek('penanda awal potongan ada satu',
+  html.split('const HARI_MASA_COBA').length - 1, 1);
+cek('penanda akhir potongan ada satu',
+  html.split('// Dibaca sekali saat login.').length - 1, 1);
+cek('penanda akhir berada sesudah hitungLangganan',
+  html.indexOf('// Dibaca sekali saat login.') > html.indexOf('function hitungLangganan('), true);
+
 console.log(`\n${lulus} lulus, ${gagal} gagal`);
 process.exit(gagal ? 1 : 0);

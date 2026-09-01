@@ -13,3 +13,12 @@ node_modules/
 # Berkas OS
 Thumbs.db
 .DS_Store
+
+# Kunci service account Firebase. Ia MENEMBUS seluruh security rules dan membuka
+# data setiap pengguna. Nama-nama di bawah adalah yang diberikan Firebase Console
+# saat kunci diunduh, plus nama yang dipakai di panduan skrip admin.
+# Menghapusnya SETELAH ter-commit tidak cukup: ia tetap ada di riwayat git, dan
+# satu-satunya perbaikan yang benar adalah mencabut kuncinya di Console.
+kunci.json
+*serviceAccount*.json
+*firebase-adminsdk*.json
