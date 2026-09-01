@@ -1148,7 +1148,7 @@ import {
 
 // Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
 // perangkat masih menjalankan versi lama dari cache service worker.
-const APP_BUILD = '2026-09-01-r';
+const APP_BUILD = '2026-09-01-s';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
@@ -3299,7 +3299,13 @@ const TARGET_BYTES   = 600_000; // jauh di bawah batas 1 MiB per dokumen Firesto
 // piksel: huruf struk yang kecil pada 1400px sering tinggal beberapa piksel
 // tingginya dan tidak terbaca sama sekali. Yang disimpan tetap versi kecil,
 // karena itu dibatasi ukuran dokumen Firestore — dua kebutuhan yang berbeda.
-const MAKS_SISI_OCR  = 2200;
+const MAKS_SISI_OCR  = 2600;
+// Pencarian kotak struk dilakukan pada salinan kecil: proyeksi kecerahan tidak
+// butuh detail, dan mengerjakannya di gambar penuh membuang waktu di HP.
+const MAKS_SISI_ANALISIS = 1400;
+// Batas pembesaran. Melebihi ini hanya mengarang piksel yang tidak ada di
+// sumbernya — menambah waktu baca tanpa menambah keterbacaan.
+const MAKS_PEMBESARAN = 3;
 
 let pendingReceipt = null;     // { base64, mime, dataUrl } sebelum entri disimpan
 
@@ -3388,29 +3394,11 @@ function cariKotakStruk(abu, w, h) {
   };
 }
 
-// Versi khusus OCR: lebih besar, abu-abu, dan kontrasnya diregangkan.
-//
-// Foto struk di HP hampir selalu kurang kontras — kertas keabu-abuan, tinta
-// pudar, cahaya tidak rata. Tesseract memutuskan mana tinta dan mana kertas dari
-// tingkat terang, jadi rentang yang sempit membuat angka menyatu dengan latar.
-// Meregangkan rentangnya memisahkan keduanya sebelum Tesseract menebak.
-//
-// Sengaja TIDAK di-binarisasi (hitam-putih tegas): Tesseract melakukan itu
-// sendiri dengan algoritma yang lebih baik, dan mendahuluinya justru menghapus
-// cetakan tipis yang masih bisa ia selamatkan.
-async function siapkanUntukOCR(file) {
-  const src = await decodeImage(file);
-  const sw = src.width || src.naturalWidth, sh = src.height || src.naturalHeight;
-  if (!sw || !sh) throw new Error('Gambar tidak bisa dibaca.');
-
-  const skala = Math.min(1, MAKS_SISI_OCR / Math.max(sw, sh));
-  const w = Math.round(sw * skala), h = Math.round(sh * skala);
-  const canvas = document.createElement('canvas');
-  canvas.width = w; canvas.height = h;
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  ctx.drawImage(src, 0, 0, w, h);
-  src.close?.();
-
+// Meregangkan kontras satu kanvas menjadi abu-abu, lalu mengembalikan nilai
+// abunya untuk dipakai ulang. Persentil 2 dan 98, bukan min/max: satu piksel
+// kilatan cahaya atau satu titik gelap akan mematok rentangnya dan membuat
+// peregangan tak berarti.
+function regangkanKontras(ctx, w, h) {
   const img = ctx.getImageData(0, 0, w, h);
   const px = img.data;
 
@@ -3422,8 +3410,6 @@ async function siapkanUntukOCR(file) {
     abu[j] = (px[i] * 0.299 + px[i + 1] * 0.587 + px[i + 2] * 0.114) | 0;
   }
 
-  // Persentil 2 dan 98, bukan min/max: satu piksel kilatan cahaya atau satu
-  // titik gelap akan mematok rentangnya dan membuat peregangan tak berarti.
   const hist = new Uint32Array(256);
   for (let j = 0; j < abu.length; j++) hist[abu[j]]++;
   const total = abu.length;
@@ -3436,23 +3422,87 @@ async function siapkanUntukOCR(file) {
   for (let i = 0, j = 0; i < px.length; i += 4, j++) {
     const v = Math.max(0, Math.min(255, ((abu[j] - lo) * 255) / rentang));
     px[i] = px[i + 1] = px[i + 2] = v;
-    abu[j] = v;                     // dipakai lagi untuk mencari kotak struk
+    abu[j] = v;
   }
   ctx.putImageData(img, 0, 0);
-
-  // Buang latar bila kotak struknya bisa dikenali. Pemotongan dilakukan setelah
-  // peregangan kontras, karena pemisahan kertas dari latar jauh lebih tegas
-  // setelahnya.
-  const kotak = cariKotakStruk(abu, w, h);
-  if (kotak) {
-    const potong = document.createElement('canvas');
-    potong.width = kotak.w; potong.height = kotak.h;
-    potong.getContext('2d').drawImage(canvas, kotak.x, kotak.y, kotak.w, kotak.h,
-                                              0, 0, kotak.w, kotak.h);
-    return { dataUrl: potong.toDataURL('image/png'), dipotong: true };
-  }
-  return { dataUrl: canvas.toDataURL('image/png'), dipotong: false };
+  return abu;
 }
+
+// Ukuran akhir gambar OCR. Murni supaya bisa diuji — di sinilah bug-nya dulu:
+// skalanya dibatasi Math.min(1, …), sehingga gambar HANYA pernah diperkecil,
+// tidak pernah diperbesar. Struk yang mengisi sebagian bingkai berakhir pada
+// resolusi yang terlalu rendah untuk dibaca, dan tidak ada apa pun yang
+// menandakannya.
+function ukuranOCR(sWidth, sHeight) {
+  const sisiTerpanjang = Math.max(sWidth, sHeight);
+  const skala = sisiTerpanjang > 0
+    ? Math.min(MAKS_PEMBESARAN, MAKS_SISI_OCR / sisiTerpanjang)
+    : 1;
+  return {
+    skala,
+    dw: Math.max(1, Math.round(sWidth * skala)),
+    dh: Math.max(1, Math.round(sHeight * skala)),
+  };
+}
+
+function kanvasDari(src, sx, sy, sw, sh, dw, dh) {
+  const c = document.createElement('canvas');
+  c.width = dw; c.height = dh;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  // Pembesaran tanpa penghalusan menghasilkan tepi huruf bergerigi yang justru
+  // menyulitkan pengenalan bentuk.
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(src, sx, sy, sw, sh, 0, 0, dw, dh);
+  return { canvas: c, ctx };
+}
+
+// Versi khusus OCR: hanya STRUKNYA, dirender sebesar mungkin dari sumber asli.
+//
+// Versi sebelumnya memperkecil seluruh foto lebih dulu (dan tidak pernah
+// memperbesar — skalanya dibatasi Math.min(1, …)), baru memotong 1:1 di akhir.
+// Akibatnya anggaran resolusi habis untuk meja di sekeliling struk: foto
+// 1200x1600 dengan struk mengisi 45% bingkai hanya menyisakan ~540x900 piksel
+// untuk struknya, sekitar 13 piksel per huruf. Di bawah itu Tesseract mulai
+// memecah kata — 'HORTIKUL' terbaca 'HORT TKUL', 'H' terbaca 'A'.
+//
+// Sekarang kotak struk dicari pada salinan kecil yang murah, lalu koordinatnya
+// dipetakan kembali ke sumber dan HANYA bagian itu yang dirender pada resolusi
+// penuh. Peregangan kontras juga dihitung dari piksel struk saja, tidak lagi
+// dicondongkan oleh warna latar.
+async function siapkanUntukOCR(file) {
+  const src = await decodeImage(file);
+  const sw = src.width || src.naturalWidth, sh = src.height || src.naturalHeight;
+  if (!sw || !sh) throw new Error('Gambar tidak bisa dibaca.');
+
+  // 1. Salinan kecil untuk mencari kotaknya.
+  const skalaAnalisis = Math.min(1, MAKS_SISI_ANALISIS / Math.max(sw, sh));
+  const aw = Math.max(1, Math.round(sw * skalaAnalisis));
+  const ah = Math.max(1, Math.round(sh * skalaAnalisis));
+  const analisis = kanvasDari(src, 0, 0, sw, sh, aw, ah);
+  const abu = regangkanKontras(analisis.ctx, aw, ah);
+  const kotak = cariKotakStruk(abu, aw, ah);
+
+  // 2. Petakan kembali ke koordinat sumber. Dijepit ke dalam batas gambar:
+  //    pembulatan skala bisa menggeser tepinya keluar beberapa piksel.
+  const dipotong = !!kotak;
+  let sx = 0, sy = 0, sWidth = sw, sHeight = sh;
+  if (kotak) {
+    sx = Math.max(0, Math.floor(kotak.x / skalaAnalisis));
+    sy = Math.max(0, Math.floor(kotak.y / skalaAnalisis));
+    sWidth  = Math.min(sw - sx, Math.ceil(kotak.w / skalaAnalisis));
+    sHeight = Math.min(sh - sy, Math.ceil(kotak.h / skalaAnalisis));
+  }
+
+  // 3. Render bagian itu sebesar yang masih masuk akal.
+  const { dw, dh } = ukuranOCR(sWidth, sHeight);
+  const akhir = kanvasDari(src, sx, sy, sWidth, sHeight, dw, dh);
+  regangkanKontras(akhir.ctx, dw, dh);
+  src.close?.();
+
+  return { dataUrl: akhir.canvas.toDataURL('image/png'), dipotong };
+}
+
 
 // Varian hitam-putih tegas. Dipakai HANYA sebagai percobaan kedua ketika
 // pembacaan pertama gagal: pada cetakan pudar ia sering menghapus huruf, tapi
