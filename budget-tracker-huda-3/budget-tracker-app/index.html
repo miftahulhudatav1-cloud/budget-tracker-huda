@@ -1148,7 +1148,7 @@ import {
 
 // Dinaikkan tiap rilis. Ditampilkan di panel Diagnosa supaya ketahuan bila
 // perangkat masih menjalankan versi lama dari cache service worker.
-const APP_BUILD = '2026-09-01-p';
+const APP_BUILD = '2026-09-01-q';
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const THIS_YEAR = new Date().getFullYear();
@@ -3797,9 +3797,15 @@ function extractDate(text) {
   return null;
 }
 
+// Nama bank / jaringan kartu: menonjol di struk EDC, tetapi BUKAN nama toko.
+// Pada struk BCA baris logonya lolos semua saringan DAN berada di atas nama
+// tokonya, jadi ia selalu menang bila yang diambil sekadar baris pertama.
+const POLA_BUKAN_TOKO = /^(bca|bri|bni|mandiri|btn|cimb|permata|danamon|ocbc|panin|visa|mastercard|debit|credit|kredit|qris|gopay|ovo|dana|shopeepay|linkaja|struk|receipt|copy|merchant|cardholder)\b/i;
+
 function extractMerchant(text) {
   const baris = text.split(/\r?\n/).map(b => b.trim()).filter(Boolean);
-  for (const b of baris.slice(0, 6)) {
+  const kandidat = [];
+  for (const b of baris.slice(0, 8)) {
     const bersih = b
       .replace(/[^A-Za-z0-9\s.'&-]/g, '')
       // Tanda baca di ujung hampir selalu derau: logo, garis, atau bayangan
@@ -3823,9 +3829,35 @@ function extractMerchant(text) {
     const jmlHuruf = (bersih.match(/[A-Za-z]/g) || []).length;
     const jmlAngka = (bersih.match(/\d/g) || []).length;
     if (jmlAngka >= jmlHuruf) continue;
-    return bersih.slice(0, 60);
+    // Baris yang membawa HARGA adalah baris barang, bukan nama toko. Tanpa
+    // penyaringan ini, "INDOMIE GORENG 3.500" mengalahkan "INDOMARET" karena
+    // hurufnya lebih banyak.
+    //
+    // Pola menuntut kelompok tiga digit yang berakhir di situ juga: kode dalam
+    // nama toko seperti "SPBU PERTAMINA 34.12708" tidak ikut tersaring, karena
+    // sesudah "34.127" masih ada angka lagi.
+    if (/\d{1,3}(?:[.,]\d{3})+(?!\d)/.test(bersih)) continue;
+    kandidat.push({ teks: bersih.slice(0, 60), huruf: jmlHuruf });
   }
-  return null;
+  if (!kandidat.length) return null;
+
+  // Dipilih yang paling banyak hurufnya, BUKAN yang paling atas.
+  //
+  // Mengambil baris pertama yang lolos membuat hasilnya berubah-ubah antar
+  // pemindaian struk yang SAMA: pada struk EDC, baris logo bank berada di atas
+  // nama toko dan sama-sama lolos saringan, jadi yang menang bergantung pada
+  // derau OCR hari itu — sekali "BCA", sekali "HORTIKUL BREWHOUSE". Itulah yang
+  // membuat keterangannya terasa acak padahal fotonya sama jelasnya.
+  //
+  // Nama toko hampir selalu baris dengan huruf terbanyak di kepala struk, dan
+  // jumlah huruf adalah ukuran yang stabil terhadap derau.
+  //
+  // Nama bank disingkirkan lebih dulu — tapi hanya bila masih ada kandidat
+  // lain; untuk struk yang memang terbitan bank, nama bank lebih berguna
+  // daripada kolom kosong.
+  const bukanBank = kandidat.filter(k => !POLA_BUKAN_TOKO.test(k.teks));
+  const dipakai = bukanBank.length ? bukanBank : kandidat;
+  return dipakai.reduce((a, b) => (b.huruf > a.huruf ? b : a)).teks;
 }
 
 const KATA_KATEGORI = [

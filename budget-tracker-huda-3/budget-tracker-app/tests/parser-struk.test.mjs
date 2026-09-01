@@ -302,5 +302,31 @@ cek('kode angka dalam nama tetap ikut',
 cek('huruf berserakan dilewati',
   parseReceipt('A B C D\nWARUNG PAK BUDI\nTOTAL 50.000').desc, 'WARUNG PAK BUDI');
 
+// ── nama toko: memilih baris, bukan sekadar yang teratas ──
+// Ini sumber "keterangannya acak". extractMerchant dulu mengambil baris PERTAMA
+// yang lolos saringan. Pada struk EDC, baris logo bank berada di atas nama toko
+// dan sama-sama lolos — jadi yang menang bergantung pada derau OCR hari itu.
+// Struk yang sama menghasilkan "2 BCA" sekali, "HORTIKUL BREWHOUSE" di lain
+// waktu, tanpa ada yang berubah pada fotonya.
+cek('logo bank di atas nama toko: nama toko yang menang',
+  parseReceipt('BCA\nHORTIKUL BREWHOUSE&KITC\nKP. SUKAKARYA DS GADOG\nTOTAL Rp.109,000').desc,
+  'HORTIKUL BREWHOUSE&KITC');
+cek('sisa OCR di baris logo tidak ikut menang',
+  parseReceipt('2 BCA\nHORTIKUL BREWHOUSE&KITC\nTOTAL Rp.109,000').desc,
+  'HORTIKUL BREWHOUSE&KITC');
+cek('kata Cardholder Copy tidak dianggap nama toko',
+  parseReceipt('Cardholder Copy\nWARUNG PAK BUDI\nTOTAL 50.000').desc, 'WARUNG PAK BUDI');
+cek('QRIS tidak dianggap nama toko',
+  parseReceipt('QRIS PAYMENT\nWARUNG PAK BUDI\nTOTAL 50.000').desc, 'WARUNG PAK BUDI');
+
+// Kalau struknya memang HANYA punya nama bank, itu lebih berguna daripada kosong.
+cek('tanpa kandidat lain, nama bank tetap dipakai',
+  parseReceipt('BCA MOBILE\nTOTAL 50.000').desc, 'BCA MOBILE');
+
+// Baris barang membawa harga; ia tidak boleh mengalahkan nama toko meski
+// hurufnya lebih banyak.
+cek('baris barang tidak mengalahkan nama toko',
+  parseReceipt('INDOMARET\nINDOMIE GORENG SOTO SPECIAL 3.500\nTOTAL 14.500').desc, 'INDOMARET');
+
 console.log(`\n${lulus} lulus, ${gagal} gagal`);
 process.exit(gagal ? 1 : 0);
